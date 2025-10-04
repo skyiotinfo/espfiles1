@@ -1,18 +1,16 @@
+/*
+ * Summary:
+ * This file implements the control and display logic for a water tank automation system using an ESP microcontroller.
+ * It manages water level sensors, a motor, a buzzer, and a TM1637 4-digit display.
+ * The system reads water levels from two sensors (high and low), controls the motor to fill the tank,
+ * provides manual override via a button, and stores motor run duration in EEPROM.
+ * Visual feedback is given via the display and status LEDs, and audible alerts are provided by the buzzer.
+ * The code supports configuration of motor duration and handles automatic and manual motor operation,
+ * including safety checks for sensor errors and tank status.
+ */
 #include <EEPROM.h>
 #include <Arduino.h>
 #include <TM1637Display.h>
-
-/*
-const uint8_t SEG_DONE[] = {
-  SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,           // d
-  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
-  SEG_C | SEG_E | SEG_G,                           // n
-  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G            // E
-  };
-*/
-
-
-// Display Module connection pins (Digital Pins)
 
 #define CLK D3
 #define DIO D4
