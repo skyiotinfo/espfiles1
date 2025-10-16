@@ -115,12 +115,13 @@ void loop()
 {
     // To maintain the authentication and async tasks
     app.loop();
+    if (WiFi.status() != WL_CONNECTED){
+        check_wifi_connection();
+    }        
+
     if (app.ready() && millis() - ms > 20000)
     {
-        if (WiFi.status() != WL_CONNECTED){
-            check_wifi_connection();
-        }
-        
+
         ms = millis();
         //JsonWriter writer;
         //object_t json, obj1, obj2;
