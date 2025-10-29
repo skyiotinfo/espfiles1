@@ -1,3 +1,9 @@
+// Water Controller with TM1637 Display 
+// Timer with analog input to set motor run duration
+// Manual override with button input  
+// Wired Controller 
+// Version 1.0
+
 
 #include <EEPROM.h>
 #include <Arduino.h>
@@ -7,18 +13,15 @@
 #define DIO D4
 
 int addr1 = 0;
-int addr2 = 1;
 int value1 = 1;
-int value2 = 2;
 byte memval1;
-byte memval2;
 
 const int ot_sensor = D1;
 const int ut_sensor = D2;
-const int outpin1 = D8;
+const int outpin = D8;
 const int ot_status = D6;
 const int ut_status = D5;
-const int outpin2 = D7;
+const int auto_status = D7;
 const int input1 = D9;
 int ot_sensorstatus=1;
 int ut_sensorstatus=1;
@@ -36,6 +39,7 @@ int motor_stoptime=0;
 int tank_size, len;
 int count=0;
 int sound=0;
+int analog_value=0;
 
 const uint8_t seg_empty[] = {
   SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,           
@@ -61,16 +65,16 @@ void setup() {
   Serial.begin(115200);
   EEPROM.begin(512);
   pinMode(input1, INPUT_PULLUP);  
-  pinMode(outpin1, OUTPUT);
+  pinMode(outpin, OUTPUT);
   pinMode(ot_status, OUTPUT);
   pinMode(ut_status, OUTPUT);
   pinMode(ot_sensor, INPUT_PULLUP);
   pinMode(ut_sensor, INPUT_PULLUP);
-  pinMode(outpin2, OUTPUT);
-  digitalWrite(outpin1, LOW);
-  motor_status=0;
-  digitalWrite(outpin2, LOW);
-  
+  pinMode(auto_status, OUTPUT);
+  digitalWrite(outpin, LOW);
+  motor_status=1;
+  digitalWrite(auto_status, HIGH);
+  analog_value=analogRead(A0);
   delay(1000);
   memval1=EEPROM.read(addr1);
   motor_duration=memval1;
@@ -79,6 +83,10 @@ void setup() {
   display.setSegments(blank);
   
   int temp_count=100;
+  
+  
+
+
   if(digitalRead(input1)==0){
     while(temp_count>=1){
       if(digitalRead(input1)==0){
@@ -149,19 +157,15 @@ void loop() {
   if(digitalRead(input1)==0){
     Serial.println("Button Clicked...!");
     if(motor_status_manual==0){
-      digitalWrite(outpin1,HIGH);
-      delay(3000);
-      digitalWrite(outpin1,LOW);
+      digitalWrite(outpin,HIGH);
       motor_status_manual=1;
       motor_status=1;
       motor_time=motor_duration*60;
       value_count=15;
     }else{
       if(motor_status_manual==1){
-        digitalWrite(outpin1,LOW);
-        digitalWrite(outpin2, HIGH);
-        delay(3000);
-        digitalWrite(outpin2, LOW);
+        digitalWrite(outpin,LOW);
+        digitalWrite(auto_status, LOW);
         Serial.println("Motor is now stopped..!");
         motor_status_manual=0;
         motor_status=0;
@@ -177,18 +181,16 @@ void loop() {
     digitalWrite(ot_status,LOW);
   }
 
-  if(ut_sensorstatus==0 && motor_status==0){
+  if(ut_sensorstatus==0){
     Serial.println(ut_sensorcount);
     Serial.println("Tank Empty");
     display.setSegments(seg_empty);
     digitalWrite(ut_status,HIGH);
-    if(ut_sensorcount>=10){
-      if(digitalRead(outpin1)!=1){
+    if(ut_sensorcount>=20){
+      if(digitalRead(outpin)!=1){
          Serial.println("Water tank is still empty, turning on the Motor");
          motor_time=(motor_duration)*60;
-         digitalWrite(outpin1, HIGH);
-         delay(3000);
-         digitalWrite(outpin1, LOW);
+         digitalWrite(outpin, HIGH);
          motor_status=1;
       }
       ut_sensorcount=0;
@@ -204,7 +206,7 @@ void loop() {
 
   
   
-  if(motor_status==1){
+  if(digitalRead(outpin)==1){
    motor_time=motor_time-1;
    Serial.println("Motor Running..!");
    display.showNumberDec(1, false, 1, 0);
@@ -215,11 +217,8 @@ void loop() {
     Serial.println("Tank Full or Timed Out..!");
     ot_sensorcount=ot_sensorcount+1;
       if(ot_sensorcount>=5){
-        digitalWrite(outpin1, LOW);
-        digitalWrite(outpin2, HIGH);
-        delay(3000);
-        digitalWrite(outpin2, LOW);
-        Serial.println("Motor is now stopped..!");
+        digitalWrite(outpin, LOW);
+        digitalWrite(auto_status, LOW);
         motor_status=0;
         ot_sensorcount=0;
         display.showNumberDec(0,false); 
@@ -233,5 +232,10 @@ void loop() {
   }
   delay(500);
   count=count+1;
+  //if(count>=90){
+  //  Serial.println("Sleep Start....!");
+  //  ESP.deepSleep(30e6);
+  //}
+  
   
  }
