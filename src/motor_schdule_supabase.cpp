@@ -1,141 +1,199 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPSupabaseRealtime.h>
+#include <EEPROM.h>
+#include <time.h>
 
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
 #else
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
 #endif
 
-#include <EEPROM.h>
+#define EEPROM_SIZE 512
+#define MOTOR_PIN D8  
+
+SupabaseRealtime realtime;
+
+struct ScheduleData {
+  bool motor_state;
+  char motor1_time[6];
+  int motor1_duration;
+  char motor2_time[6];
+  int motor2_duration;
+};
+
+ScheduleData scheduleData;
+unsigned long lastCheck = 0;
+bool motorRunning = false;
+unsigned long motorStartTime = 0;
+unsigned long motorRunDuration = 0;
 
 const char* WIFI_SSID = "Anupam";
 const char* WIFI_PASS = "12345678";
 
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
-const char* TABLE_NAME = "pump_motor";
-const char* DEVICE_ID = "1001"; 
+const char* USER_EMAIL = "user2@demo.com";
+const char* USER_PASS = "123456";
 
-const int MOTOR_PIN = D5;
-const int BUZZER_PIN = D8;
-
-int motor_state = 0;  
-SupabaseRealtime realtime;
-
-#define EEPROM_SIZE 8
-#define EEPROM_ADDR 0
-
-void saveMotorStateToEEPROM(int state);
-int loadMotorStateFromEEPROM();
-void sendMotorStateToSupabase(int state);
-void setMotorState(int newState);
-void handleRealtime(String result);
-
-void saveMotorStateToEEPROM(int state) {
-  EEPROM.begin(EEPROM_SIZE);
-  EEPROM.write(EEPROM_ADDR, state);
+void saveScheduleToEEPROM() {
+  EEPROM.put(0, scheduleData);
   EEPROM.commit();
-  Serial.printf("Saved state %d to EEPROM\n", state);
+  Serial.println("Saved schedule to EEPROM.");
 }
 
-int loadMotorStateFromEEPROM() {
-  EEPROM.begin(EEPROM_SIZE);
-  int state = EEPROM.read(EEPROM_ADDR);
-  Serial.printf("Loaded state %d from EEPROM\n", state);
-  return state;
+void loadScheduleFromEEPROM() {
+  EEPROM.get(0, scheduleData);
+  Serial.println("Loaded schedule from EEPROM:");
+  Serial.printf("  Motor state: %d\n", scheduleData.motor_state);
+  Serial.printf("  Motor1: %s (%d min)\n", scheduleData.motor1_time, scheduleData.motor1_duration);
+  Serial.printf("  Motor2: %s (%d min)\n", scheduleData.motor2_time, scheduleData.motor2_duration);
 }
 
-void sendMotorStateToSupabase(int state) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected, cannot update Supabase");
+void clearEEPROM() {
+  for (int i = 0; i < EEPROM_SIZE; i++) EEPROM.write(i, 0);
+  EEPROM.commit();
+  Serial.println("EEPROM cleared!");
+}
+
+bool timeMatches(const char* scheduledTime, const char* currentTime) {
+  return strcmp(scheduledTime, currentTime) == 0;
+}
+
+void startMotorForDuration(unsigned long durationMs) {
+  digitalWrite(MOTOR_PIN, HIGH);
+  motorRunning = true;
+  motorStartTime = millis();
+  motorRunDuration = durationMs;
+  Serial.printf("Motor started for %lu ms\n", durationMs);
+}
+
+void handleMotorRun() {
+  if (motorRunning && (millis() - motorStartTime >= motorRunDuration)) {
+    digitalWrite(MOTOR_PIN, LOW);
+    motorRunning = false;
+    Serial.println("Motor stopped after duration.");
+  }
+}
+
+void HandleChanges(String result) {
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, result);
+  if (error) {
+    Serial.println("JSON parse error");
     return;
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient https;
-
-  String url = String(SUPABASE_URL) + "/rest/v1/" + TABLE_NAME + "?id=eq." + DEVICE_ID;
-  if (https.begin(client, url)) {
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Content-Type", "application/json");
-
-    String body = "{\"state\":" + String(state) + "}";
-    int code = https.PATCH(body);
-    Serial.printf("📤 Supabase update: %s | Code: %d\n", body.c_str(), code);
-    https.end();
-  } else {
-    Serial.println("HTTPS begin failed");
-  }
-}
-
-void setMotorState(int newState) {
-  if (newState == motor_state) return; 
-
-  motor_state = newState;
-  saveMotorStateToEEPROM(motor_state);
-
-  if (motor_state == 1) {
-    digitalWrite(MOTOR_PIN, HIGH);
-    digitalWrite(BUZZER_PIN, HIGH);
-    Serial.println("🟢 Motor Started");
-  } else {
-    digitalWrite(MOTOR_PIN, LOW);
-    digitalWrite(BUZZER_PIN, LOW);
-    Serial.println("🔴 Motor Stopped");
-  }
-
-  sendMotorStateToSupabase(motor_state);
-}
-
-void handleRealtime(String result) {
-  JsonDocument doc;
-  deserializeJson(doc, result);
-
   String tableName = doc["table"];
-  String event = doc["type"];
   JsonObject record = doc["record"];
 
-  if (tableName == TABLE_NAME && event == "UPDATE") {
-    int newState = record["state"];
-    Serial.printf("📡 Realtime update received: %d\n", newState);
-    setMotorState(newState);
+  if (tableName == "motor_schedule") {
+    scheduleData.motor_state = record["motor_state"].as<bool>();
+    strlcpy(scheduleData.motor1_time, record["motor1_time"] | "", sizeof(scheduleData.motor1_time));
+    scheduleData.motor1_duration = record["motor1_duration"] | 0;
+    strlcpy(scheduleData.motor2_time, record["motor2_time"] | "", sizeof(scheduleData.motor2_time));
+    scheduleData.motor2_duration = record["motor2_duration"] | 0;
+
+    saveScheduleToEEPROM();
+
+    Serial.println("Updated schedule from Supabase:");
+    Serial.printf("  Motor1: %s (%d min)\n", scheduleData.motor1_time, scheduleData.motor1_duration);
+    Serial.printf("  Motor2: %s (%d min)\n", scheduleData.motor2_time, scheduleData.motor2_duration);
+    Serial.printf("  Manual Motor State: %d\n", scheduleData.motor_state);
+
+    if (scheduleData.motor_state) {
+      digitalWrite(MOTOR_PIN, HIGH);
+      motorRunning = false; 
+    } else {
+      digitalWrite(MOTOR_PIN, LOW);
+    }
   }
+}
+
+void connectWiFi() {
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+void initTime() {
+  configTime(19800, 0, "pool.ntp.org", "time.nist.gov"); 
+  Serial.print("Syncing time via NTP");
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println("\n Time synchronized!");
+  Serial.printf(" Current Time: %02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min);
+}
+
+void connectSupabase() {
+  realtime.begin(SUPABASE_URL, SUPABASE_KEY, HandleChanges);
+  realtime.login_email(USER_EMAIL, USER_PASS);
+  realtime.addChangesListener("motor_schedule", "*", "public", "");
+  realtime.listen();
+  Serial.println(" Connected to Supabase Realtime");
 }
 
 void setup() {
   Serial.begin(115200);
   pinMode(MOTOR_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(MOTOR_PIN, LOW);
-  digitalWrite(BUZZER_PIN, LOW);
 
-  motor_state = loadMotorStateFromEEPROM();
-  setMotorState(motor_state);
+  EEPROM.begin(EEPROM_SIZE);
+  loadScheduleFromEEPROM();
 
-  Serial.printf("Connecting to WiFi: %s\n", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    Serial.print(".");
-  }
-  Serial.println("\n✅ WiFi Connected");
-  Serial.print("IP: "); Serial.println(WiFi.localIP());
+  connectWiFi();
+  initTime();
+  connectSupabase();
 
-  realtime.begin(SUPABASE_URL, SUPABASE_KEY, handleRealtime);
-  realtime.addChangesListener(TABLE_NAME, "UPDATE", "public", "");
-  realtime.listen();
-
-  Serial.println("Listening to Supabase changes...");
+  Serial.println(" Setup complete, listening for Supabase changes...");
 }
 
 void loop() {
   realtime.loop();
+  handleMotorRun();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" WiFi lost, reconnecting...");
+    connectWiFi();
+    initTime();
+    connectSupabase();
+  }
+
+  if (millis() - lastCheck > 10000) {
+    lastCheck = millis();
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      char currentTime[6];
+      sprintf(currentTime, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+      Serial.printf(" Time: %s\n", currentTime);
+
+      if (!motorRunning) { 
+        if (timeMatches(scheduleData.motor1_time, currentTime)) {
+          startMotorForDuration(scheduleData.motor1_duration * 60000UL);
+        } else if (timeMatches(scheduleData.motor2_time, currentTime)) {
+          startMotorForDuration(scheduleData.motor2_duration * 60000UL);
+        }
+      }
+
+      if (scheduleData.motor_state && !motorRunning) {
+        digitalWrite(MOTOR_PIN, HIGH);
+      } else if (!scheduleData.motor_state && !motorRunning) {
+        digitalWrite(MOTOR_PIN, LOW);
+      }
+
+    } else {
+      Serial.println(" Time not yet available!");
+    }
+  }
 }
