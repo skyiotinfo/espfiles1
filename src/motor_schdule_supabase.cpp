@@ -15,15 +15,19 @@
 
 SupabaseRealtime realtime;
 
-struct ScheduleData {
-  bool motor_state;
-  char motor1_time[6];
-  int motor1_duration;
-  char motor2_time[6];
-  int motor2_duration;
+struct PumpMotorData {
+  bool state;                
+  bool sch1_en, sch2_en, sch3_en;
+  char sch1_start[6];
+  char sch2_start[6];
+  char sch3_start[6];
+  int sch1_duration;
+  int sch2_duration;
+  int sch3_duration;
 };
 
-ScheduleData scheduleData;
+PumpMotorData motorData;
+
 unsigned long lastCheck = 0;
 bool motorRunning = false;
 unsigned long motorStartTime = 0;
@@ -37,24 +41,19 @@ const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 const char* USER_EMAIL = "user2@demo.com";
 const char* USER_PASS = "123456";
 
-void saveScheduleToEEPROM() {
-  EEPROM.put(0, scheduleData);
+void saveMotorToEEPROM() {
+  EEPROM.put(0, motorData);
   EEPROM.commit();
-  Serial.println("Saved schedule to EEPROM.");
+  Serial.println("Saved motor data to EEPROM.");
 }
 
-void loadScheduleFromEEPROM() {
-  EEPROM.get(0, scheduleData);
-  Serial.println("Loaded schedule from EEPROM:");
-  Serial.printf("  Motor state: %d\n", scheduleData.motor_state);
-  Serial.printf("  Motor1: %s (%d min)\n", scheduleData.motor1_time, scheduleData.motor1_duration);
-  Serial.printf("  Motor2: %s (%d min)\n", scheduleData.motor2_time, scheduleData.motor2_duration);
-}
-
-void clearEEPROM() {
-  for (int i = 0; i < EEPROM_SIZE; i++) EEPROM.write(i, 0);
-  EEPROM.commit();
-  Serial.println("EEPROM cleared!");
+void loadMotorFromEEPROM() {
+  EEPROM.get(0, motorData);
+  Serial.println("Loaded motor data from EEPROM:");
+  Serial.printf("  Manual State: %d\n", motorData.state);
+  Serial.printf("  SCH1: %s (%d min, en=%d)\n", motorData.sch1_start, motorData.sch1_duration, motorData.sch1_en);
+  Serial.printf("  SCH2: %s (%d min, en=%d)\n", motorData.sch2_start, motorData.sch2_duration, motorData.sch2_en);
+  Serial.printf("  SCH3: %s (%d min, en=%d)\n", motorData.sch3_start, motorData.sch3_duration, motorData.sch3_en);
 }
 
 bool timeMatches(const char* scheduledTime, const char* currentTime) {
@@ -88,23 +87,31 @@ void HandleChanges(String result) {
   String tableName = doc["table"];
   JsonObject record = doc["record"];
 
-  if (tableName == "motor_schedule") {
-    scheduleData.motor_state = record["motor_state"].as<bool>();
-    strlcpy(scheduleData.motor1_time, record["motor1_time"] | "", sizeof(scheduleData.motor1_time));
-    scheduleData.motor1_duration = record["motor1_duration"] | 0;
-    strlcpy(scheduleData.motor2_time, record["motor2_time"] | "", sizeof(scheduleData.motor2_time));
-    scheduleData.motor2_duration = record["motor2_duration"] | 0;
+  if (tableName == "pump_motor") {
+    motorData.state = record["state"].as<bool>();
+    motorData.sch1_en = record["sch1_en"].as<bool>();
+    motorData.sch2_en = record["sch2_en"].as<bool>();
+    motorData.sch3_en = record["sch3_en"].as<bool>();
 
-    saveScheduleToEEPROM();
+    strlcpy(motorData.sch1_start, record["sch1_start"] | "", sizeof(motorData.sch1_start));
+    strlcpy(motorData.sch2_start, record["sch2_start"] | "", sizeof(motorData.sch2_start));
+    strlcpy(motorData.sch3_start, record["sch3_start"] | "", sizeof(motorData.sch3_start));
 
-    Serial.println("Updated schedule from Supabase:");
-    Serial.printf("  Motor1: %s (%d min)\n", scheduleData.motor1_time, scheduleData.motor1_duration);
-    Serial.printf("  Motor2: %s (%d min)\n", scheduleData.motor2_time, scheduleData.motor2_duration);
-    Serial.printf("  Manual Motor State: %d\n", scheduleData.motor_state);
+    motorData.sch1_duration = record["sch1_duration"] | 0;
+    motorData.sch2_duration = record["sch2_duration"] | 0;
+    motorData.sch3_duration = record["sch3_duration"] | 0;
 
-    if (scheduleData.motor_state) {
+    saveMotorToEEPROM();
+
+    Serial.println("Updated from Supabase:");
+    Serial.printf("  SCH1: %s (%d min, en=%d)\n", motorData.sch1_start, motorData.sch1_duration, motorData.sch1_en);
+    Serial.printf("  SCH2: %s (%d min, en=%d)\n", motorData.sch2_start, motorData.sch2_duration, motorData.sch2_en);
+    Serial.printf("  SCH3: %s (%d min, en=%d)\n", motorData.sch3_start, motorData.sch3_duration, motorData.sch3_en);
+    Serial.printf("  Manual Motor State: %d\n", motorData.state);
+
+    if (motorData.state) {
       digitalWrite(MOTOR_PIN, HIGH);
-      motorRunning = false; 
+      motorRunning = false;
     } else {
       digitalWrite(MOTOR_PIN, LOW);
     }
@@ -124,23 +131,22 @@ void connectWiFi() {
 }
 
 void initTime() {
-  configTime(19800, 0, "pool.ntp.org", "time.nist.gov"); 
+  configTime(19800, 0, "pool.ntp.org", "time.nist.gov");
   Serial.print("Syncing time via NTP");
   struct tm timeinfo;
   while (!getLocalTime(&timeinfo)) {
     Serial.print(".");
     delay(500);
   }
-  Serial.println("\n Time synchronized!");
-  Serial.printf(" Current Time: %02d:%02d\n", timeinfo.tm_hour, timeinfo.tm_min);
+  Serial.println("\nTime synchronized!");
 }
 
 void connectSupabase() {
   realtime.begin(SUPABASE_URL, SUPABASE_KEY, HandleChanges);
   realtime.login_email(USER_EMAIL, USER_PASS);
-  realtime.addChangesListener("motor_schedule", "*", "public", "");
+  realtime.addChangesListener("pump_motor", "*", "public", "");
   realtime.listen();
-  Serial.println(" Connected to Supabase Realtime");
+  Serial.println("Connected to Supabase Realtime");
 }
 
 void setup() {
@@ -149,13 +155,13 @@ void setup() {
   digitalWrite(MOTOR_PIN, LOW);
 
   EEPROM.begin(EEPROM_SIZE);
-  loadScheduleFromEEPROM();
+  loadMotorFromEEPROM();
 
   connectWiFi();
   initTime();
   connectSupabase();
 
-  Serial.println(" Setup complete, listening for Supabase changes...");
+  Serial.println("Setup complete, listening for Supabase changes...");
 }
 
 void loop() {
@@ -163,7 +169,7 @@ void loop() {
   handleMotorRun();
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println(" WiFi lost, reconnecting...");
+    Serial.println("WiFi lost, reconnecting...");
     connectWiFi();
     initTime();
     connectSupabase();
@@ -176,24 +182,26 @@ void loop() {
     if (getLocalTime(&timeinfo)) {
       char currentTime[6];
       sprintf(currentTime, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-      Serial.printf(" Time: %s\n", currentTime);
+      Serial.printf("Time: %s\n", currentTime);
 
-      if (!motorRunning) { 
-        if (timeMatches(scheduleData.motor1_time, currentTime)) {
-          startMotorForDuration(scheduleData.motor1_duration * 60000UL);
-        } else if (timeMatches(scheduleData.motor2_time, currentTime)) {
-          startMotorForDuration(scheduleData.motor2_duration * 60000UL);
+      if (!motorRunning) {
+        if (motorData.sch1_en && timeMatches(motorData.sch1_start, currentTime)) {
+          startMotorForDuration(motorData.sch1_duration * 60000UL);
+        } else if (motorData.sch2_en && timeMatches(motorData.sch2_start, currentTime)) {
+          startMotorForDuration(motorData.sch2_duration * 60000UL);
+        } else if (motorData.sch3_en && timeMatches(motorData.sch3_start, currentTime)) {
+          startMotorForDuration(motorData.sch3_duration * 60000UL);
         }
       }
 
-      if (scheduleData.motor_state && !motorRunning) {
+      if (motorData.state && !motorRunning) {
         digitalWrite(MOTOR_PIN, HIGH);
-      } else if (!scheduleData.motor_state && !motorRunning) {
+      } else if (!motorData.state && !motorRunning) {
         digitalWrite(MOTOR_PIN, LOW);
       }
 
     } else {
-      Serial.println(" Time not yet available!");
+      Serial.println("Time not yet available!");
     }
   }
 }
