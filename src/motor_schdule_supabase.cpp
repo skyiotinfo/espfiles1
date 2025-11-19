@@ -4,9 +4,11 @@
 #include <EEPROM.h>
 #include <time.h>
 #include <TM1637Display.h>
+#include <PZEM004Tv30.h>
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h>
+  //#include <SoftwareSerial.h>
 #else
   #include <WiFi.h>
 #endif
@@ -27,6 +29,12 @@ void connectSupabase();
 void displayIdle();
 
 TM1637Display display(CLK_PIN, DIO_PIN);
+PZEM004Tv30 pzem1(4, 14); 
+
+float zeroIfNan(float v);
+float VOLTAGE, CURRENT, POWER;
+unsigned long lastVoltageRead = 0;
+const unsigned long VOLTAGE_READ_INTERVAL = 2000;
 
 SupabaseRealtime realtime;
 
@@ -48,13 +56,23 @@ bool motorRunning = false;
 unsigned long motorStartTime = 0;
 unsigned long motorRunDuration = 0;
 
+float zeroIfNan(float v) {
+  if (isnan(v)) v = 0;
+  return v;
+}
+
+void readVoltage() {
+  VOLTAGE = zeroIfNan(pzem1.voltage());  
+  CURRENT = zeroIfNan(pzem1.current());  
+  POWER = zeroIfNan(pzem1.power());  
+}
 const char* WIFI_SSID = "Anupam";
 const char* WIFI_PASS = "12345678";
 
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
-const char* USER_EMAIL = "user2@demo.com";
-const char* USER_PASS = "123456";
+const char* USER_EMAIL = "1234567890@gmail.com";
+const char* USER_PASS = "1234";
 
 unsigned long lastWifiAttempt = 0;
 bool wifiWasConnected = false;
@@ -171,17 +189,36 @@ void handleMotorRun() {
   }
 
   if (motorRunning && (millis() - motorStartTime >= motorRunDuration)) {
+    motorData.state = false;
+    saveMotorToEEPROM();
+
+    int lowCount = 0;
+    for (int i = 0; i < 10; ++i) {
+      if (digitalRead(ot_sensor) == LOW) lowCount++;
+      delay(500);
+    }
+    Serial.printf("OT confirm after duration: lowCount=%d\n", lowCount);
+
     stopMotorImmediate();
   }
 }
 
+
+
+
+
 void HandleChanges(String result) {
-  StaticJsonDocument<512> doc;
+  if (result.length() < 6) return;
+
+  StaticJsonDocument<8192> doc;
   DeserializationError error = deserializeJson(doc, result);
   if (error) {
-    Serial.println("JSON parse error");
+    Serial.print("JSON error: ");
+    Serial.println(error.c_str());
     return;
   }
+
+  if (!doc.containsKey("table") || !doc.containsKey("record")) return;
 
   String tableName = doc["table"].as<String>();
   JsonObject record = doc["record"].as<JsonObject>();
@@ -307,30 +344,9 @@ void setup() {
   display.clear();
 
   loadMotorFromEEPROM();
-
   readManualDurationFromEEPROM();
 
-  if (digitalRead(input1) == LOW) {
-    Serial.println("Boot button held — entering manual-duration adjust mode...");
-    display.showNumberDec(manual_duration, false);
-    while (digitalRead(input1) == LOW) {
-      manual_duration += 5;
-      if (manual_duration > 100) manual_duration = 0; 
-      writeManualDurationToEEPROM(manual_duration);
-      Serial.printf("Adjusting manual_duration -> %d\n", manual_duration);
-      display.showNumberDec(manual_duration, false);
-      delay(200);
-    }
-    if (manual_duration < 1 || manual_duration > 100) manual_duration = 30;
-    Serial.printf("Final manual_duration after boot adjust: %d\n", manual_duration);
-    for (int i = 0; i < 4; ++i) {
-      display.showNumberDec(manual_duration, false);
-      delay(200);
-      display.clear();
-      delay(100);
-    }
-    display.showNumberDec(0, false);
-  }
+  
 
   bool wifiOK = connectWiFiBlocking();
   if (wifiOK) {
@@ -343,6 +359,24 @@ void setup() {
 }
 
 void loop() {
+    
+  VOLTAGE = pzem1.voltage();
+  VOLTAGE = zeroIfNan(VOLTAGE);
+  CURRENT = pzem1.current();
+  CURRENT = zeroIfNan(CURRENT);
+  POWER = pzem1.power();
+  POWER = zeroIfNan(POWER);
+
+  // Serial.printf("Voltage        : %.2f\ V\n", VOLTAGE);
+  // Serial.printf("Current        : %.2f\ A\n", CURRENT);
+  // Serial.printf("Power Active   : %.2f\ W\n", POWER);
+  
+  unsigned long now = millis();
+    if(now - lastVoltageRead > VOLTAGE_READ_INTERVAL){
+    lastVoltageRead = now;
+    readVoltage();
+    Serial.printf("PZEM: VOLTAGE=%.2f V, CURRENT=%.2f A, POWER=%.2f W\n", VOLTAGE, CURRENT, POWER);
+  }
   if (supabaseConnected && WiFi.status() == WL_CONNECTED) {
     realtime.loop();
   }
@@ -365,9 +399,19 @@ void loop() {
   if (ot_sensorstatus == LOW) {
     if (motorRunning || motorData.state) {
       Serial.println("Tank full — stopping motor!");
-      stopMotorImmediate();
-      motorData.state = false;
-      saveMotorToEEPROM();
+      int lowCount = 0;
+      for (int i = 0; i < 10; ++i) {
+        if (digitalRead(ot_sensor) == LOW) lowCount++;
+        delay(500);
+      }
+      Serial.printf("OT checks lowCount=%d\n", lowCount);
+      if (lowCount >= 5) {
+        stopMotorImmediate();
+        motorData.state = false;
+        saveMotorToEEPROM();
+      } else {
+        Serial.println("OT NOT confirmed - ignoring.");
+      }
     }
   }
 
@@ -376,7 +420,9 @@ void loop() {
     delay(50);
     while (digitalRead(input1) == LOW) delay(20);
 
-    if (ot_sensorstatus == HIGH) {
+    int otstatus_now = digitalRead(ot_sensor);
+
+    if (otstatus_now == HIGH) {
       motorData.state = !motorData.state;
 
       if (motorData.state) {
@@ -424,7 +470,17 @@ void loop() {
     } else if ((!motorData.state || ot_sensorstatus == LOW) && !motorRunning) {
       digitalWrite(MOTOR_PIN, LOW);
     }
+
+    
+    
   }
 
   delay(50);
 }
+
+// float zeroIfNan(float v) 
+// {
+//   if (isnan(v)) 
+//   v = 0;
+//   return v;
+// }
