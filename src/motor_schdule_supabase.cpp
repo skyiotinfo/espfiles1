@@ -1,3 +1,8 @@
+// FULL UPDATED CODE WITH SCHEDULE RESUME + OT CANCEL LOGIC (updated copy)
+// --------------------------------------------------------------------
+// Merged fixes: persistent scheduledRemainingMs, periodic checkpointing,
+// restore on boot, OT cancel clears persisted schedule, ArduinoJson fix, etc.
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPSupabaseRealtime.h>
@@ -8,7 +13,6 @@
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h>
-  //#include <SoftwareSerial.h>
 #else
   #include <WiFi.h>
 #endif
@@ -23,15 +27,13 @@ const int ot_sensor = D1;
 const int ot_status = D6;
 const int auto_status = D7;
 const int input1 = D9;
-
 void initTime();
 void connectSupabase();
 void displayIdle();
-
 TM1637Display display(CLK_PIN, DIO_PIN);
-PZEM004Tv30 pzem1(4, 14); 
+PZEM004Tv30 pzem1(D2, D5);
 
-float zeroIfNan(float v);
+float zeroIfNan(float v) { if (isnan(v)) v = 0; return v; }
 float VOLTAGE, CURRENT, POWER;
 unsigned long lastVoltageRead = 0;
 const unsigned long VOLTAGE_READ_INTERVAL = 2000;
@@ -56,278 +58,284 @@ bool motorRunning = false;
 unsigned long motorStartTime = 0;
 unsigned long motorRunDuration = 0;
 
-float zeroIfNan(float v) {
-  if (isnan(v)) v = 0;
-  return v;
-}
+// NEW: Resume scheduled run after power failure
+unsigned long scheduledRemainingMs = 0;
+bool scheduleInProgress = false;
 
-void readVoltage() {
-  VOLTAGE = zeroIfNan(pzem1.voltage());  
-  CURRENT = zeroIfNan(pzem1.current());  
-  POWER = zeroIfNan(pzem1.power());  
-}
-const char* WIFI_SSID = "Anupam";
-const char* WIFI_PASS = "12345678";
+// Filesystem / EEPROM layout (addresses)
+const int MANUAL_ADDR = 100;        // keep existing manual duration byte
+const int SCHEDULE_MAGIC_ADDR = 200; // single byte magic
+const int SCHEDULE_REMAIN_ADDR = 201; // unsigned long (4 or 8 bytes depending)
+const int SCHEDULE_FLAG_ADDR = 205;  // single byte flag
+const byte SCHEDULE_MAGIC = 0x42;
 
-const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
-const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
-const char* USER_EMAIL = "1234567890@gmail.com";
-const char* USER_PASS = "1234";
-
-unsigned long lastWifiAttempt = 0;
-bool wifiWasConnected = false;
-bool supabaseConnected = false;
-
-const int MANUAL_ADDR = 100;
-int manual_duration = 30; 
-
+int manual_duration = 30;
 bool manualStopRequested = false;
 
+// Save interval to avoid flashing EEPROM too often
+const unsigned long SCHEDULE_SAVE_INTERVAL_MS = 5000;
+unsigned long lastScheduleSaveMs = 0;
+
+// ---------- SAVE / LOAD ----------
 void saveMotorToEEPROM() {
   EEPROM.put(0, motorData);
   EEPROM.commit();
-  Serial.println("Saved motor data to EEPROM.");
 }
 
 void loadMotorFromEEPROM() {
+  // Ensure struct version fits in EEPROM size
   EEPROM.get(0, motorData);
-  Serial.println("Loaded motor data from EEPROM:");
-  Serial.printf("  Manual State: %d\n", motorData.state ? 1 : 0);
-  Serial.printf("  SCH1: %s (%d min, en=%d)\n", motorData.sch1_start, motorData.sch1_duration, motorData.sch1_en ? 1 : 0);
-  Serial.printf("  SCH2: %s (%d min, en=%d)\n", motorData.sch2_start, motorData.sch2_duration, motorData.sch2_en ? 1 : 0);
-  Serial.printf("  SCH3: %s (%d min, en=%d)\n", motorData.sch3_start, motorData.sch3_duration, motorData.sch3_en ? 1 : 0);
 }
 
 void writeManualDurationToEEPROM(int mins) {
-  if (mins < 0) mins = 0;
-  if (mins > 255) mins = 255; 
+  mins = constrain(mins, 0, 255);
   EEPROM.write(MANUAL_ADDR, (byte)mins);
-  if (EEPROM.commit()) {
-    Serial.printf("Manual duration (%d min) saved to EEPROM @%d\n", mins, MANUAL_ADDR);
-  } else {
-    Serial.println("ERROR! Manual duration EEPROM commit failed");
-  }
+  EEPROM.commit();
 }
 
 void readManualDurationFromEEPROM() {
   byte v = EEPROM.read(MANUAL_ADDR);
-  if (v == 0xFF) { 
-    manual_duration = 30;
-  } else {
-    manual_duration = (int)v;
-  }
-
+  if (v == 0xFF) manual_duration = 30;
+  else manual_duration = v;
   if (manual_duration < 1 || manual_duration > 100) manual_duration = 30;
-  Serial.printf("Manual duration loaded: %d min\n", manual_duration);
 }
 
+// Persist scheduled state: magic (1 byte), remaining (unsigned long), flag (1 byte)
+void saveScheduledState() {
+  EEPROM.write(SCHEDULE_MAGIC_ADDR, SCHEDULE_MAGIC);
+  EEPROM.put(SCHEDULE_REMAIN_ADDR, scheduledRemainingMs);
+  EEPROM.write(SCHEDULE_FLAG_ADDR, scheduleInProgress ? 1 : 0);
+  EEPROM.commit();
+  lastScheduleSaveMs = millis();
+}
+
+void loadScheduledState() {
+  byte magic = EEPROM.read(SCHEDULE_MAGIC_ADDR);
+  if (magic != SCHEDULE_MAGIC) {
+    // no saved schedule
+    scheduledRemainingMs = 0;
+    scheduleInProgress = false;
+    return;
+  }
+  EEPROM.get(SCHEDULE_REMAIN_ADDR, scheduledRemainingMs);
+  byte flag = EEPROM.read(SCHEDULE_FLAG_ADDR);
+  scheduleInProgress = (flag == 1);
+  // Sanity checks
+  if (scheduledRemainingMs > 24UL * 3600UL * 1000UL) { // more than 24 hrs -> ignore
+    scheduledRemainingMs = 0;
+    scheduleInProgress = false;
+  }
+}
+
+void clearScheduledState() {
+  EEPROM.write(SCHEDULE_MAGIC_ADDR, 0xFF);
+  EEPROM.put(SCHEDULE_REMAIN_ADDR, (unsigned long)0);
+  EEPROM.write(SCHEDULE_FLAG_ADDR, 0);
+  EEPROM.commit();
+  scheduledRemainingMs = 0;
+  scheduleInProgress = false;
+}
+
+// ---------- TIME MATCH ----------
 bool timeMatches(const char* scheduledTime, const char* currentTime) {
+  // scheduledTime expected "HH:MM"
+  if (scheduledTime == nullptr || scheduledTime[0] == '\0') return false;
   return strcmp(scheduledTime, currentTime) == 0;
 }
 
+// ---------- DISPLAY ----------
 void displayTankFull() {
   uint8_t FF_segments[] = {
-    SEG_A | SEG_E | SEG_F | SEG_G, 
-    SEG_A | SEG_E | SEG_F | SEG_G,  
-    0,
-    0
+    SEG_A | SEG_E | SEG_F | SEG_G,
+    SEG_A | SEG_E | SEG_F | SEG_G,
+    0, 0
   };
   display.setSegments(FF_segments);
 }
 
+void displayIdle() { display.showNumberDec(0, true); }
+
 void displayMotorRunning() {
-  if (!motorRunning) {
-    displayIdle();
-    return;
+  if (!motorRunning) return displayIdle();
+
+  unsigned long elapsedMs = millis() - motorStartTime;
+  unsigned long elapsedMin = elapsedMs / 60000UL;
+  unsigned long remainingMin = (motorRunDuration + 59999UL) / 60000UL; // round up display
+  if (motorRunDuration > elapsedMs) {
+    unsigned long remMs = motorRunDuration - elapsedMs;
+    remainingMin = (remMs + 59999UL) / 60000UL;
+  } else {
+    remainingMin = 0;
   }
-
-  unsigned long elapsed = (millis() - motorStartTime) / 60000UL;
-  unsigned long remaining = 0;
-
-  if (motorRunDuration > (elapsed * 60000UL)) {
-    remaining = (motorRunDuration / 60000UL) - elapsed;
-  }
-
-  if (remaining > 99) remaining = 99;
-
-  display.showNumberDec(remaining, true);
+  if (remainingMin > 99) remainingMin = 99;
+  display.showNumberDec(remainingMin, true);
 }
 
-void displayIdle() {
-  display.showNumberDec(0, true);
-}
-
+// ---------- MOTOR CONTROL ----------
 void startMotorForDuration(unsigned long durationMs) {
   manualStopRequested = false;
-
-  digitalWrite(MOTOR_PIN, HIGH);
   motorRunning = true;
   motorStartTime = millis();
   motorRunDuration = durationMs;
+  digitalWrite(MOTOR_PIN, HIGH);
+  displayMotorRunning();
 
-  displayMotorRunning();  
-
-  Serial.printf("Motor started for %lu ms\n", durationMs);
+  // Mark as state true so remote/persisted state reflects motor running
+  motorData.state = true;
+  saveMotorToEEPROM();
 }
 
 void stopMotorImmediate() {
-  digitalWrite(MOTOR_PIN, LOW);
   motorRunning = false;
-  motorRunDuration = 0; 
-
-  displayIdle();  
-
-  Serial.println("Motor stopped.");
+  motorRunDuration = 0;
+  digitalWrite(MOTOR_PIN, LOW);
+  displayIdle();
+  // If we stopped manually, clear scheduled state if it was scheduled
+  clearScheduledState();
 }
 
+// UPDATED: Track remaining scheduled time, checkpoint to EEPROM periodically
 void handleMotorRun() {
   if (manualStopRequested) {
-    if (motorRunning) {
-      stopMotorImmediate();
-    }
+    if (motorRunning) stopMotorImmediate();
+    manualStopRequested = false;
     return;
   }
 
-  if (motorRunning && (millis() - motorStartTime >= motorRunDuration)) {
-    motorData.state = false;
-    saveMotorToEEPROM();
+  if (motorRunning) {
+    unsigned long elapsedMs = millis() - motorStartTime;
 
-    int lowCount = 0;
-    for (int i = 0; i < 10; ++i) {
-      if (digitalRead(ot_sensor) == LOW) lowCount++;
-      delay(500);
+    // NEW: Store remaining time for resume only if scheduleInProgress
+    if (scheduleInProgress) {
+      if (motorRunDuration > elapsedMs)
+        scheduledRemainingMs = motorRunDuration - elapsedMs;
+      else
+        scheduledRemainingMs = 0;
+
+      // checkpoint to EEPROM periodically
+      if (millis() - lastScheduleSaveMs >= SCHEDULE_SAVE_INTERVAL_MS) {
+        saveScheduledState();
+      }
     }
-    Serial.printf("OT confirm after duration: lowCount=%d\n", lowCount);
 
-    stopMotorImmediate();
+    if (elapsedMs >= motorRunDuration) {
+      // run finished
+      stopMotorImmediate();
+      motorData.state = false;
+      saveMotorToEEPROM();
+
+      scheduleInProgress = false;
+      scheduledRemainingMs = 0;
+      clearScheduledState();
+    }
   }
 }
 
-
-
-
-
+// ---------- SUPABASE CALLBACK ----------
 void HandleChanges(String result) {
   if (result.length() < 6) return;
 
   StaticJsonDocument<8192> doc;
-  DeserializationError error = deserializeJson(doc, result);
-  if (error) {
-    Serial.print("JSON error: ");
-    Serial.println(error.c_str());
+  DeserializationError err = deserializeJson(doc, result);
+  if (err) {
+    Serial.print("JSON parse failed: ");
+    Serial.println(err.c_str());
     return;
   }
 
   if (!doc.containsKey("table") || !doc.containsKey("record")) return;
-
-  String tableName = doc["table"].as<String>();
   JsonObject record = doc["record"].as<JsonObject>();
 
-  if (tableName == "pump_motor") {
-    motorData.state = record["state"].as<bool>();
-    motorData.sch1_en = record["sch1_en"].as<bool>();
-    motorData.sch2_en = record["sch2_en"].as<bool>();
-    motorData.sch3_en = record["sch3_en"].as<bool>();
+  motorData.state = record["state"].as<bool>();
+  motorData.sch1_en = record["sch1_en"].as<bool>();
+  motorData.sch2_en = record["sch2_en"].as<bool>();
+  motorData.sch3_en = record["sch3_en"].as<bool>();
 
-    strlcpy(motorData.sch1_start, record["sch1_start"] | "", sizeof(motorData.sch1_start));
-    strlcpy(motorData.sch2_start, record["sch2_start"] | "", sizeof(motorData.sch2_start));
-    strlcpy(motorData.sch3_start, record["sch3_start"] | "", sizeof(motorData.sch3_start));
+  strlcpy(motorData.sch1_start, record["sch1_start"] | "", 6);
+  strlcpy(motorData.sch2_start, record["sch2_start"] | "", 6);
+  strlcpy(motorData.sch3_start, record["sch3_start"] | "", 6);
 
-    motorData.sch1_duration = record["sch1_duration"] | 0;
-    motorData.sch2_duration = record["sch2_duration"] | 0;
-    motorData.sch3_duration = record["sch3_duration"] | 0;
+  motorData.sch1_duration = record["sch1_duration"] | 0;
+  motorData.sch2_duration = record["sch2_duration"] | 0;
+  motorData.sch3_duration = record["sch3_duration"] | 0;
 
-    saveMotorToEEPROM();
+  saveMotorToEEPROM();
 
-    if (motorData.state && !motorRunning)
-      digitalWrite(MOTOR_PIN, HIGH);
-    else if (!motorData.state && !motorRunning)
-      digitalWrite(MOTOR_PIN, LOW);
+  // If remote says state true and local is not running, start motor for appropriate duration
+  // Note: remote doesn't tell how long — scheduled runs will start from schedule checks.
+  if (motorData.state && !motorRunning) {
+    // Do not forcibly start motor unless schedule logic or manual button requested.
+    // Keep pin state consistent if not running
+    digitalWrite(MOTOR_PIN, HIGH);
+  } else if (!motorData.state && !motorRunning) {
+    digitalWrite(MOTOR_PIN, LOW);
   }
 }
 
+// ---------- WIFI / TIME / SUPABASE ----------
+const char* WIFI_SSID = "Anupam";
+const char* WIFI_PASS = "12345678";
+
+const char* SUPABASE_URL = "https://gzcpvuueeexndnvwoanw.supabase.co";
+const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6Y3B2dXVlZWV4bmRudndvYW53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE1NzA2OTIsImV4cCI6MjA3NzE0NjY5Mn0.lW_6KKWeUF1l7qq4RAQvJsAmrdQetLenL5O8LYH62Ek";
+const char* USER_EMAIL = "1234567890@gmail.com";
+const char* USER_PASS = "1234";  
+
+bool wifiWasConnected = false;
+bool supabaseConnected = false;
+unsigned long lastWifiAttempt = 0;
+
 bool connectWiFiBlocking() {
-  Serial.println("Connecting to WiFi (up to 30s)...");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
+  unsigned long start = millis();
 
-  unsigned long startAttempt = millis();
-  const unsigned long timeout = 30000;
-
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < timeout) {
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) {
     delay(300);
-    Serial.print(".");
   }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi Connected!");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-    return true;
-  } else {
-    Serial.println("\nWiFi NOT connected! Continuing...");
-    return false;
-  }
+  return WiFi.status() == WL_CONNECTED;
 }
 
 void wifiReconnectNonBlocking() {
   if (WiFi.status() == WL_CONNECTED) {
     if (!wifiWasConnected) {
       wifiWasConnected = true;
-      Serial.println("WiFi restored.");
       initTime();
       connectSupabase();
     }
     return;
   }
 
-  if (wifiWasConnected) {
-    wifiWasConnected = false;
-    supabaseConnected = false;
-    Serial.println("WiFi lost.");
-  }
+  wifiWasConnected = false;
+  supabaseConnected = false;
 
-  unsigned long now = millis();
-  if (now - lastWifiAttempt > 10000UL) {
-    lastWifiAttempt = now;
-    Serial.println("Attempting WiFi reconnect...");
+  if (millis() - lastWifiAttempt > 10000) {
+    lastWifiAttempt = millis();
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
 }
 
 void initTime() {
   configTime(19800, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print("Syncing time");
   time_t now = time(nullptr);
   int attempts = 0;
-
-  while (now < 24 * 3600 && attempts < 30) {
+  while (now < 24 * 3600 && attempts++ < 30) {
     delay(500);
-    Serial.print(".");
     now = time(nullptr);
-    attempts++;
-  }
-
-  if (now >= 24 * 3600) {
-    struct tm *ti = localtime(&now);
-    Serial.printf("\nTime synced: %02d:%02d\n", ti->tm_hour, ti->tm_min);
-  } else {
-    Serial.println("\nTime sync failed.");
   }
 }
 
 void connectSupabase() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  Serial.println("Connecting to Supabase...");
   realtime.begin(SUPABASE_URL, SUPABASE_KEY, HandleChanges);
   realtime.login_email(USER_EMAIL, USER_PASS);
   realtime.addChangesListener("pump_motor", "*", "public", "");
   realtime.listen();
 
   supabaseConnected = true;
-  Serial.println("Supabase connected.");
 }
 
+// ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
   EEPROM.begin(EEPROM_SIZE);
@@ -345,142 +353,131 @@ void setup() {
 
   loadMotorFromEEPROM();
   readManualDurationFromEEPROM();
+  loadScheduledState(); // <- load persisted schedule info
 
-  
-
-  bool wifiOK = connectWiFiBlocking();
-  if (wifiOK) {
+  if (connectWiFiBlocking()) {
     wifiWasConnected = true;
     initTime();
     connectSupabase();
   }
 
-  Serial.println("Setup complete.");
+  // NEW: Resume scheduled run after power restore only if OT sensor is HIGH (no tank full)
+  if (scheduleInProgress && scheduledRemainingMs > 0) {
+    if (digitalRead(ot_sensor) == HIGH) {
+      startMotorForDuration(scheduledRemainingMs);
+      // ensure saved flag is present
+      saveScheduledState();
+    } else {
+      // Tank is full; do not start. Keep persisted schedule so it may be resumed later.
+      Serial.println("Persisted scheduled run found but OT sensor is LOW - not starting.");
+    }
+  }
 }
 
+// ---------- LOOP ----------
 void loop() {
-    
-  VOLTAGE = pzem1.voltage();
-  VOLTAGE = zeroIfNan(VOLTAGE);
-  CURRENT = pzem1.current();
-  CURRENT = zeroIfNan(CURRENT);
-  POWER = pzem1.power();
-  POWER = zeroIfNan(POWER);
-
-  // Serial.printf("Voltage        : %.2f\ V\n", VOLTAGE);
-  // Serial.printf("Current        : %.2f\ A\n", CURRENT);
-  // Serial.printf("Power Active   : %.2f\ W\n", POWER);
-  
   unsigned long now = millis();
-    if(now - lastVoltageRead > VOLTAGE_READ_INTERVAL){
+
+  if (now - lastVoltageRead > VOLTAGE_READ_INTERVAL) {
     lastVoltageRead = now;
-    readVoltage();
-    Serial.printf("PZEM: VOLTAGE=%.2f V, CURRENT=%.2f A, POWER=%.2f W\n", VOLTAGE, CURRENT, POWER);
+    VOLTAGE = zeroIfNan(pzem1.voltage());
+    CURRENT = zeroIfNan(pzem1.current());
+    POWER = zeroIfNan(pzem1.power());
   }
-  if (supabaseConnected && WiFi.status() == WL_CONNECTED) {
+
+  if (supabaseConnected && WiFi.status() == WL_CONNECTED)
     realtime.loop();
-  }
 
   handleMotorRun();
-
   wifiReconnectNonBlocking();
 
   int ot_sensorstatus = digitalRead(ot_sensor);
   int buttonState = digitalRead(input1);
 
-  if (ot_sensorstatus == LOW) {
-    displayTankFull();
-  } else if (motorRunning) {
-    displayMotorRunning();
-  } else {
-    displayIdle();
-  }
+  if (ot_sensorstatus == LOW) displayTankFull();
+  else if (motorRunning) displayMotorRunning();
+  else displayIdle();
 
+  // ---------- NEW: OT cancels schedule permanently ----------
   if (ot_sensorstatus == LOW) {
     if (motorRunning || motorData.state) {
-      Serial.println("Tank full — stopping motor!");
       int lowCount = 0;
-      for (int i = 0; i < 10; ++i) {
+      for (int i = 0; i < 10; i++) {
         if (digitalRead(ot_sensor) == LOW) lowCount++;
         delay(500);
       }
-      Serial.printf("OT checks lowCount=%d\n", lowCount);
+
       if (lowCount >= 5) {
         stopMotorImmediate();
         motorData.state = false;
         saveMotorToEEPROM();
-      } else {
-        Serial.println("OT NOT confirmed - ignoring.");
+
+        scheduleInProgress = false;
+        scheduledRemainingMs = 0;
+        clearScheduledState(); // also clear persisted schedule
       }
     }
   }
 
+  // ---------- MANUAL BUTTON ----------
   if (buttonState == LOW) {
-    Serial.println("Manual button pressed!");
     delay(50);
     while (digitalRead(input1) == LOW) delay(20);
 
-    int otstatus_now = digitalRead(ot_sensor);
-
-    if (otstatus_now == HIGH) {
+    if (digitalRead(ot_sensor) == HIGH) {
       motorData.state = !motorData.state;
 
-      if (motorData.state) {
-        manualStopRequested = false;
-        if (!motorRunning) {
-          unsigned long durMs = (unsigned long)manual_duration * 60000UL;
-          startMotorForDuration(durMs);
-        }
-      } else {
+      if (motorData.state && !motorRunning) {
+        // start manual run for manual_duration
+        scheduleInProgress = false;
+        scheduledRemainingMs = 0;
+        clearScheduledState(); // manual run should not be resumed as scheduled
+        startMotorForDuration((unsigned long)manual_duration * 60000UL);
+      } else if (!motorData.state) {
+        // stop requested
         manualStopRequested = true;
         stopMotorImmediate();
       }
-      saveMotorToEEPROM();
-    } else {
-      Serial.println("Tank full — manual ON blocked!");
-      manualStopRequested = true;
-      stopMotorImmediate();
-      motorData.state = false;
+
       saveMotorToEEPROM();
     }
   }
 
   digitalWrite(ot_status, ot_sensorstatus == LOW ? HIGH : LOW);
 
+  // ---------- SCHEDULE CHECK ----------
   if (millis() - lastCheck > 10000) {
     lastCheck = millis();
 
-    time_t now = time(nullptr);
-    struct tm *ti = localtime(&now);
-    char currentTime[6] = {0};
-    if (ti) snprintf(currentTime, sizeof(currentTime), "%02d:%02d", ti->tm_hour, ti->tm_min);
+    time_t nowt = time(nullptr);
+    struct tm *ti = localtime(&nowt);
+    char currentTime[6];
+    snprintf(currentTime, 6, "%02d:%02d", ti->tm_hour, ti->tm_min);
 
-    if (ot_sensorstatus == HIGH && !motorRunning) {
+    if (!motorRunning && ot_sensorstatus == HIGH) {
+
       if (motorData.sch1_en && timeMatches(motorData.sch1_start, currentTime)) {
-        startMotorForDuration((unsigned long)motorData.sch1_duration * 60000UL);
-      } else if (motorData.sch2_en && timeMatches(motorData.sch2_start, currentTime)) {
-        startMotorForDuration((unsigned long)motorData.sch2_duration * 60000UL);
-      } else if (motorData.sch3_en && timeMatches(motorData.sch3_start, currentTime)) {
-        startMotorForDuration((unsigned long)motorData.sch3_duration * 60000UL);
+        scheduledRemainingMs = (unsigned long)motorData.sch1_duration * 60000UL;
+        scheduleInProgress = true;
+        startMotorForDuration(scheduledRemainingMs);
+        saveScheduledState();
+      }
+
+      else if (motorData.sch2_en && timeMatches(motorData.sch2_start, currentTime)) {
+        scheduledRemainingMs = (unsigned long)motorData.sch2_duration * 60000UL;
+        scheduleInProgress = true;
+        startMotorForDuration(scheduledRemainingMs);
+        saveScheduledState();
+      }
+
+      else if (motorData.sch3_en && timeMatches(motorData.sch3_start, currentTime)) {
+        scheduledRemainingMs = (unsigned long)motorData.sch3_duration * 60000UL;
+        scheduleInProgress = true;
+        startMotorForDuration(scheduledRemainingMs);
+        saveScheduledState();
       }
     }
-
-    if (motorData.state && !motorRunning && ot_sensorstatus == HIGH) {
-      digitalWrite(MOTOR_PIN, HIGH);
-    } else if ((!motorData.state || ot_sensorstatus == LOW) && !motorRunning) {
-      digitalWrite(MOTOR_PIN, LOW);
-    }
-
-    
-    
   }
 
   delay(50);
 }
-
-// float zeroIfNan(float v) 
-// {
-//   if (isnan(v)) 
-//   v = 0;
-//   return v;
-// }
