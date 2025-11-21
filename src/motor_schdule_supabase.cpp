@@ -1,8 +1,3 @@
-// FULL UPDATED CODE WITH SCHEDULE RESUME + OT CANCEL LOGIC (updated copy)
-// --------------------------------------------------------------------
-// Merged fixes: persistent scheduledRemainingMs, periodic checkpointing,
-// restore on boot, OT cancel clears persisted schedule, ArduinoJson fix, etc.
-
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPSupabaseRealtime.h>
@@ -58,32 +53,27 @@ bool motorRunning = false;
 unsigned long motorStartTime = 0;
 unsigned long motorRunDuration = 0;
 
-// NEW: Resume scheduled run after power failure
 unsigned long scheduledRemainingMs = 0;
 bool scheduleInProgress = false;
 
-// Filesystem / EEPROM layout (addresses)
-const int MANUAL_ADDR = 100;        // keep existing manual duration byte
-const int SCHEDULE_MAGIC_ADDR = 200; // single byte magic
-const int SCHEDULE_REMAIN_ADDR = 201; // unsigned long (4 or 8 bytes depending)
-const int SCHEDULE_FLAG_ADDR = 205;  // single byte flag
+const int MANUAL_ADDR = 100;        
+const int SCHEDULE_MAGIC_ADDR = 200; 
+const int SCHEDULE_REMAIN_ADDR = 201; 
+const int SCHEDULE_FLAG_ADDR = 205;  
 const byte SCHEDULE_MAGIC = 0x42;
 
 int manual_duration = 30;
 bool manualStopRequested = false;
 
-// Save interval to avoid flashing EEPROM too often
 const unsigned long SCHEDULE_SAVE_INTERVAL_MS = 5000;
 unsigned long lastScheduleSaveMs = 0;
 
-// ---------- SAVE / LOAD ----------
 void saveMotorToEEPROM() {
   EEPROM.put(0, motorData);
   EEPROM.commit();
 }
 
 void loadMotorFromEEPROM() {
-  // Ensure struct version fits in EEPROM size
   EEPROM.get(0, motorData);
 }
 
@@ -100,7 +90,6 @@ void readManualDurationFromEEPROM() {
   if (manual_duration < 1 || manual_duration > 100) manual_duration = 30;
 }
 
-// Persist scheduled state: magic (1 byte), remaining (unsigned long), flag (1 byte)
 void saveScheduledState() {
   EEPROM.write(SCHEDULE_MAGIC_ADDR, SCHEDULE_MAGIC);
   EEPROM.put(SCHEDULE_REMAIN_ADDR, scheduledRemainingMs);
@@ -112,7 +101,6 @@ void saveScheduledState() {
 void loadScheduledState() {
   byte magic = EEPROM.read(SCHEDULE_MAGIC_ADDR);
   if (magic != SCHEDULE_MAGIC) {
-    // no saved schedule
     scheduledRemainingMs = 0;
     scheduleInProgress = false;
     return;
@@ -120,8 +108,7 @@ void loadScheduledState() {
   EEPROM.get(SCHEDULE_REMAIN_ADDR, scheduledRemainingMs);
   byte flag = EEPROM.read(SCHEDULE_FLAG_ADDR);
   scheduleInProgress = (flag == 1);
-  // Sanity checks
-  if (scheduledRemainingMs > 24UL * 3600UL * 1000UL) { // more than 24 hrs -> ignore
+  if (scheduledRemainingMs > 24UL * 3600UL * 1000UL) { 
     scheduledRemainingMs = 0;
     scheduleInProgress = false;
   }
@@ -136,14 +123,11 @@ void clearScheduledState() {
   scheduleInProgress = false;
 }
 
-// ---------- TIME MATCH ----------
 bool timeMatches(const char* scheduledTime, const char* currentTime) {
-  // scheduledTime expected "HH:MM"
   if (scheduledTime == nullptr || scheduledTime[0] == '\0') return false;
   return strcmp(scheduledTime, currentTime) == 0;
 }
 
-// ---------- DISPLAY ----------
 void displayTankFull() {
   uint8_t FF_segments[] = {
     SEG_A | SEG_E | SEG_F | SEG_G,
@@ -160,7 +144,7 @@ void displayMotorRunning() {
 
   unsigned long elapsedMs = millis() - motorStartTime;
   unsigned long elapsedMin = elapsedMs / 60000UL;
-  unsigned long remainingMin = (motorRunDuration + 59999UL) / 60000UL; // round up display
+  unsigned long remainingMin = (motorRunDuration + 59999UL) / 60000UL; 
   if (motorRunDuration > elapsedMs) {
     unsigned long remMs = motorRunDuration - elapsedMs;
     remainingMin = (remMs + 59999UL) / 60000UL;
@@ -171,7 +155,6 @@ void displayMotorRunning() {
   display.showNumberDec(remainingMin, true);
 }
 
-// ---------- MOTOR CONTROL ----------
 void startMotorForDuration(unsigned long durationMs) {
   manualStopRequested = false;
   motorRunning = true;
@@ -180,7 +163,6 @@ void startMotorForDuration(unsigned long durationMs) {
   digitalWrite(MOTOR_PIN, HIGH);
   displayMotorRunning();
 
-  // Mark as state true so remote/persisted state reflects motor running
   motorData.state = true;
   saveMotorToEEPROM();
 }
@@ -190,11 +172,9 @@ void stopMotorImmediate() {
   motorRunDuration = 0;
   digitalWrite(MOTOR_PIN, LOW);
   displayIdle();
-  // If we stopped manually, clear scheduled state if it was scheduled
   clearScheduledState();
 }
 
-// UPDATED: Track remaining scheduled time, checkpoint to EEPROM periodically
 void handleMotorRun() {
   if (manualStopRequested) {
     if (motorRunning) stopMotorImmediate();
@@ -205,21 +185,18 @@ void handleMotorRun() {
   if (motorRunning) {
     unsigned long elapsedMs = millis() - motorStartTime;
 
-    // NEW: Store remaining time for resume only if scheduleInProgress
     if (scheduleInProgress) {
       if (motorRunDuration > elapsedMs)
         scheduledRemainingMs = motorRunDuration - elapsedMs;
       else
         scheduledRemainingMs = 0;
 
-      // checkpoint to EEPROM periodically
       if (millis() - lastScheduleSaveMs >= SCHEDULE_SAVE_INTERVAL_MS) {
         saveScheduledState();
       }
     }
 
     if (elapsedMs >= motorRunDuration) {
-      // run finished
       stopMotorImmediate();
       motorData.state = false;
       saveMotorToEEPROM();
@@ -231,7 +208,6 @@ void handleMotorRun() {
   }
 }
 
-// ---------- SUPABASE CALLBACK ----------
 void HandleChanges(String result) {
   if (result.length() < 6) return;
 
@@ -261,25 +237,24 @@ void HandleChanges(String result) {
 
   saveMotorToEEPROM();
 
-  // If remote says state true and local is not running, start motor for appropriate duration
-  // Note: remote doesn't tell how long — scheduled runs will start from schedule checks.
+
   if (motorData.state && !motorRunning) {
-    // Do not forcibly start motor unless schedule logic or manual button requested.
-    // Keep pin state consistent if not running
+
     digitalWrite(MOTOR_PIN, HIGH);
   } else if (!motorData.state && !motorRunning) {
     digitalWrite(MOTOR_PIN, LOW);
   }
 }
 
-// ---------- WIFI / TIME / SUPABASE ----------
-const char* WIFI_SSID = "Anupam";
-const char* WIFI_PASS = "12345678";
+const char* WIFI_SSID = "Airel_8600577773";
+const char* WIFI_PASS = "air10162";
 
-const char* SUPABASE_URL = "https://gzcpvuueeexndnvwoanw.supabase.co";
-const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6Y3B2dXVlZWV4bmRudndvYW53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE1NzA2OTIsImV4cCI6MjA3NzE0NjY5Mn0.lW_6KKWeUF1l7qq4RAQvJsAmrdQetLenL5O8LYH62Ek";
+ 
+const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
+const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
 const char* USER_EMAIL = "1234567890@gmail.com";
-const char* USER_PASS = "1234";  
+const char* USER_PASS = "1234";
+  
 
 bool wifiWasConnected = false;
 bool supabaseConnected = false;
@@ -335,7 +310,6 @@ void connectSupabase() {
   supabaseConnected = true;
 }
 
-// ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
   EEPROM.begin(EEPROM_SIZE);
@@ -353,7 +327,7 @@ void setup() {
 
   loadMotorFromEEPROM();
   readManualDurationFromEEPROM();
-  loadScheduledState(); // <- load persisted schedule info
+  loadScheduledState(); 
 
   if (connectWiFiBlocking()) {
     wifiWasConnected = true;
@@ -361,20 +335,16 @@ void setup() {
     connectSupabase();
   }
 
-  // NEW: Resume scheduled run after power restore only if OT sensor is HIGH (no tank full)
   if (scheduleInProgress && scheduledRemainingMs > 0) {
     if (digitalRead(ot_sensor) == HIGH) {
       startMotorForDuration(scheduledRemainingMs);
-      // ensure saved flag is present
       saveScheduledState();
     } else {
-      // Tank is full; do not start. Keep persisted schedule so it may be resumed later.
       Serial.println("Persisted scheduled run found but OT sensor is LOW - not starting.");
     }
   }
 }
 
-// ---------- LOOP ----------
 void loop() {
   unsigned long now = millis();
 
@@ -398,7 +368,6 @@ void loop() {
   else if (motorRunning) displayMotorRunning();
   else displayIdle();
 
-  // ---------- NEW: OT cancels schedule permanently ----------
   if (ot_sensorstatus == LOW) {
     if (motorRunning || motorData.state) {
       int lowCount = 0;
@@ -414,12 +383,11 @@ void loop() {
 
         scheduleInProgress = false;
         scheduledRemainingMs = 0;
-        clearScheduledState(); // also clear persisted schedule
+        clearScheduledState(); 
       }
     }
   }
 
-  // ---------- MANUAL BUTTON ----------
   if (buttonState == LOW) {
     delay(50);
     while (digitalRead(input1) == LOW) delay(20);
@@ -428,13 +396,11 @@ void loop() {
       motorData.state = !motorData.state;
 
       if (motorData.state && !motorRunning) {
-        // start manual run for manual_duration
         scheduleInProgress = false;
         scheduledRemainingMs = 0;
-        clearScheduledState(); // manual run should not be resumed as scheduled
+        clearScheduledState(); 
         startMotorForDuration((unsigned long)manual_duration * 60000UL);
       } else if (!motorData.state) {
-        // stop requested
         manualStopRequested = true;
         stopMotorImmediate();
       }
@@ -445,7 +411,6 @@ void loop() {
 
   digitalWrite(ot_status, ot_sensorstatus == LOW ? HIGH : LOW);
 
-  // ---------- SCHEDULE CHECK ----------
   if (millis() - lastCheck > 10000) {
     lastCheck = millis();
 
