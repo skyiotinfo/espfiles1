@@ -34,6 +34,7 @@ void connectSupabase();
 void displayIdle();
 TM1637Display display(CLK_PIN, DIO_PIN);
 String dt_payload = "";
+DateTime rt1;
 //PZEM004Tv30 pzem1(D2, D5);
 
 float zeroIfNan(float v) { if (isnan(v)) v = 0; return v; }
@@ -295,6 +296,19 @@ void HandleChanges(String result) {
   } else if (!motorData.state && !motorRunning) {
     digitalWrite(MOTOR_PIN, LOW);
   }
+
+  Serial.print(rt1.day());
+  Serial.print("/");
+  Serial.print(rt1.month());
+  Serial.print("/");
+  Serial.print(rt1.year());
+  Serial.print("  ");
+
+  Serial.print(rt1.hour());
+  Serial.print(":");
+  Serial.print(rt1.minute());
+  Serial.print(":");
+  Serial.println(rt1.second());
 }
 
 const char* WIFI_SSID = "Airtel_9764005401";
@@ -433,21 +447,7 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
-  DateTime rt1 = rtc.now();
-
-  Serial.print(rt1.day());
-  Serial.print("/");
-  Serial.print(rt1.month());
-  Serial.print("/");
-  Serial.print(rt1.year());
-  Serial.print("  ");
-
-  Serial.print(rt1.hour());
-  Serial.print(":");
-  Serial.print(rt1.minute());
-  Serial.print(":");
-  Serial.println(rt1.second());
-
+  rt1 = rtc.now();
 
   /*
 
@@ -459,8 +459,7 @@ void loop() {
   } */
 
   if (supabaseConnected && WiFi.status() == WL_CONNECTED)
-    realtime.loop();
-
+  realtime.loop();
   handleMotorRun();
   wifiReconnectNonBlocking();
 
@@ -483,7 +482,6 @@ void loop() {
         stopMotorImmediate();
         motorData.state = false;
         saveMotorToEEPROM();
-
         scheduleInProgress = false;
         scheduledRemainingMs = 0;
         clearScheduledState(); 
@@ -547,5 +545,5 @@ void loop() {
     }
   }
 
-  delay(2000);
+  delay(200);
 }
