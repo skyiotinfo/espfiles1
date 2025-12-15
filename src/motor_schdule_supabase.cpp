@@ -246,8 +246,8 @@ void HandleChanges(String result) {
   }
 }
 
-const char* WIFI_SSID = "Airel_8600577773";
-const char* WIFI_PASS = "air10162";
+const char* WIFI_SSID = "Airtel_9764005401";
+const char* WIFI_PASS = "air46402";
 
  
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";

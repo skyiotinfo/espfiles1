@@ -57,7 +57,7 @@ void setup()
   Serial.begin(115200);
   pinMode(buzzer,OUTPUT);
   digitalWrite(buzzer,LOW);
-  WiFi.begin("Anupam", "12345678");
+  WiFi.begin("Airtel_9764005401", "air46403");
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(100);
@@ -76,7 +76,7 @@ void setup()
 
   realtime.login_email("user2@demo.com", "123456");
 
-  realtime.addChangesListener("profiles", "UPDATE", "public", "");
+  //realtime.addChangesListener("profiles", "UPDATE", "public", "");
   // Listen to changes in the `pump_motor` table in the public schema
   realtime.addChangesListener("pump_motor", "*", "public", "");
 
