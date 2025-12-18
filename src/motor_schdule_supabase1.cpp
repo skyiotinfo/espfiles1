@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPSupabaseRealtime.h>
+#include <ESPSupabase.h>
 #include <EEPROM.h>
 #include <time.h>
 #include <TM1637Display.h>
@@ -54,6 +55,8 @@ const unsigned long EXECUTION_INTERVAL = 20000; // 20 Second in milliseconds
 unsigned long now;
 
 SupabaseRealtime realtime;
+Supabase db;
+String JSON = "1";
 
 unsigned long lastCheck = 0;
 bool motorRunning = false;
@@ -75,11 +78,11 @@ bool manualStopRequested = false;
 const unsigned long SCHEDULE_SAVE_INTERVAL_MS = 5000;
 unsigned long lastScheduleSaveMs = 0;
 
-//const char* WIFI_SSID = "sm42";
-//const char* WIFI_PASS = "chai1111";
+const char* WIFI_SSID = "sm42";
+const char* WIFI_PASS = "chai1111";
 
-const char* WIFI_SSID = "Airtel_9764005401";
-const char* WIFI_PASS = "air46403";
+//const char* WIFI_SSID = "Airtel_9764005401";
+//const char* WIFI_PASS = "air46403";
 
  
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
@@ -231,12 +234,17 @@ time_t toUnix(
   return mktime(&t);
 }
 
-void process_localevents(){
+void process_LocalEvents(){
   if (digitalRead(input1) == LOW && device_data.mstate == 0) {
     device_data.mstate = 1;
     device_data.manual_state = 1;
     digitalWrite(MOTOR_PIN, HIGH);
     Serial.println("Motor Turned ON via Local Button");
+    int code = db.update("pump_motor").eq("column", "state").doUpdate(JSON);
+    delay(1000);
+    Serial.println(code);
+    db.urlQuery_reset();
+    
   }
   else if (digitalRead(input1) == LOW && device_data.mstate == 1) {
     device_data.mstate = 0;
@@ -244,6 +252,7 @@ void process_localevents(){
     digitalWrite(MOTOR_PIN, LOW);
     Serial.println("Motor Turned OFF via Local Button");
   }
+
 
   if (now - lastExecutionTime >= EXECUTION_INTERVAL) {
     lastExecutionTime = now;
@@ -272,7 +281,7 @@ void process_localevents(){
         Serial.println(ts1-ts2);  // Unix timestamp0
         Serial.println(ts1-ts3);  // Unix timestamp
         Serial.println(device_data.sch1_duration);
-        if( ((ts1-ts2)/60 <= device_data.sch1_duration) && ((ts1-ts2)/60 > 0) && digitalRead(MOTOR_PIN) != HIGH){
+        if( ((ts1-ts2)/60 <= device_data.sch1_duration) && ((ts1-ts2) > 0) && digitalRead(MOTOR_PIN) != HIGH){
           device_data.mstate = 1;  
           digitalWrite(MOTOR_PIN, HIGH);
           Serial.println("Motor Turned ON via Schedule 1");
@@ -307,41 +316,26 @@ void init_devicedata(){
   device_data.hour=0;
   device_data.minute=0;
   device_data.second=0;
-    String s=eeprom_read_data(20,30,"sch1_data");
-    Serial.println(s);
-    Serial.println(s.substring(0,2));
-    device_data.hour=s.toInt();
-    Serial.println(s.substring(3,5));
-    device_data.minute=s.substring(3,5).toInt();
-    device_data.second=0;
-    int s1 = eeprom_read_int(3,0,"m_duration");
-    device_data.sch1_duration=s1;
-  String sch1_start_str = String(device_data.sch1_start);
-  Serial.println("Sch1 Start String: " + sch1_start_str);
-  Serial.println(s1);
   device_data.manual_state = 0;
-}
-
-void init_serverdata(){
-  server_data.mstate=0;
-  server_data.m_auto=0;
-  server_data.motor_duration=0;
-  server_data.sch1_en=0;
-  server_data.sch2_en=0;
-  server_data.sch3_en=0;   
-  server_data.sch1_duration=30;
-  server_data.sch2_duration=30;
-  server_data.sch3_duration=30;
-  strcpy(server_data.sch1_start,"0700");
-  strcpy(server_data.sch2_start,"0000");
-  strcpy(server_data.sch3_start,"0000");
-
-  EEPROM.get(0, server_data.mstate);
-  EEPROM.get(1, server_data.m_auto);
-  EEPROM.get(3, server_data.motor_duration);  
-  EEPROM.get(11, server_data.sch1_en);
-  EEPROM.get(12, server_data.sch2_en);
-  EEPROM.get(13, server_data.sch3_en);
+    String sch1=eeprom_read_data(20,30,"sch_data");
+    String sch2=eeprom_read_data(40,30,"sch_data");
+    String sch3=eeprom_read_data(60,30,"sch_data");
+    Serial.print("Sch1 Data :");
+    Serial.print(sch1);
+    Serial.print("==");
+    Serial.print("Sch2 Data :");
+    Serial.print(sch2);
+    Serial.print("==");
+    Serial.print("Sch3 Data :");
+    Serial.print(sch3);
+    Serial.println("");
+    device_data.hour=sch1.toInt();
+    device_data.minute=sch1.substring(3,5).toInt();
+    device_data.second=0;
+    int s1_duration = eeprom_read_int(15,0,"s1_duration");
+    device_data.sch1_duration=s1_duration;
+    Serial.print("Sch1 Duration :");
+    Serial.println(device_data.sch1_duration);
 }
 
 String eeprom_write_data(String data1, int duration, String write_data) {
@@ -401,9 +395,9 @@ String eeprom_write_data(String data1, int duration, String write_data) {
       }
       EEPROM.write(20 + data1.length(), '\0');
       EEPROM.commit();
-      Serial.println("Written String: " + data1);
-      EEPROM.put(3, duration);
+      EEPROM.put(15, duration);
       EEPROM.commit();
+      Serial.println("Written String: " + data1);
     }
 
     if(write_data == "sch2_update") {
@@ -412,9 +406,9 @@ String eeprom_write_data(String data1, int duration, String write_data) {
       }
       EEPROM.write(40 + data1.length(), '\0');
       EEPROM.commit();
-      Serial.println("Written String: " + data1);
-      EEPROM.put(4, duration);
+      EEPROM.put(16, duration);
       EEPROM.commit();
+      Serial.println("Written String: " + data1);
     }
 
     if(write_data == "sch3_update") {
@@ -423,9 +417,9 @@ String eeprom_write_data(String data1, int duration, String write_data) {
       }
       EEPROM.write(60 + data1.length(), '\0');
       EEPROM.commit();
-      Serial.println("Written String: " + data1);
-      EEPROM.put(5, duration);
+      EEPROM.put(17, duration);
       EEPROM.commit();
+      Serial.println("Written String: " + data1);
     }
 
     return "d1";
@@ -433,51 +427,8 @@ String eeprom_write_data(String data1, int duration, String write_data) {
 
 String eeprom_read_data(int addr, int duration, String read_data) {
     String val1="";
-    if(read_data == "m_on_status") {
-      EEPROM.get(1, val1);
-      return val1;
-    }
 
-    if(read_data == "auto_on_status") {
-      EEPROM.get(1, val1);
-      return val1;
-    }
-
-    if(read_data == "m_duration") {
-      EEPROM.get(3, val1);
-      return val1;
-    }
-
-    if(read_data == "s1_on_status") {
-      EEPROM.get(11, val1);
-      return val1;
-    }
-
-    if(read_data == "s1_off_status") {
-      EEPROM.get(11, val1);
-      return val1;
-    }
-
-    if(read_data == "s2_on_status") {
-      EEPROM.get(12, val1);
-      return val1;
-    }
-    if(read_data == "s2_off_status") {
-      EEPROM.get(12, val1);
-      return val1;
-    }
-
-    if(read_data == "s3_on_status") {
-      EEPROM.get(13, val1);
-      return val1;
-    }
-
-    if(read_data == "s3_off_status") {
-      EEPROM.get(13, val1);
-      return val1;
-    }
-
-    if(read_data == "sch1_data") {
+    if(read_data == "sch_data") {
       String sdata = "";
       char ch;
       while (true) {
@@ -487,7 +438,7 @@ String eeprom_read_data(int addr, int duration, String read_data) {
       }
       return sdata;
     }
-    return "d1";
+    return "999";
 }
 
 int eeprom_read_int(int addr, int duration, String read_data) {
@@ -512,16 +463,7 @@ int eeprom_read_int(int addr, int duration, String read_data) {
       return val1;
     }
 
-    if(read_data == "s1_off_status") {
-      EEPROM.get(11, val1);
-      return val1;
-    }
-
     if(read_data == "s2_on_status") {
-      EEPROM.get(12, val1);
-      return val1;
-    }
-    if(read_data == "s2_off_status") {
       EEPROM.get(12, val1);
       return val1;
     }
@@ -531,13 +473,25 @@ int eeprom_read_int(int addr, int duration, String read_data) {
       return val1;
     }
 
-    if(read_data == "s3_off_status") {
-      EEPROM.get(13, val1);
+    if(read_data == "s1_duration") {
+      EEPROM.get(15, val1);
       return val1;
     }
-    return 10;
+
+    if(read_data == "s1_duration") {
+      EEPROM.get(16, val1);
+      return val1;
+    }
+
+    if(read_data == "s1_duration") {
+      EEPROM.get(17, val1);
+      return val1;
+    }
+
+    return 999;
 }
 
+// line 481 - This is referance code .....
 String eeprom_readString(int address) {
   String data = "";
   char ch;
@@ -547,130 +501,6 @@ String eeprom_readString(int address) {
     data += ch;
   }
   return data;
-}
-
-void displayTankFull() {
-  uint8_t FF_segments[] = {
-    SEG_A | SEG_E | SEG_F | SEG_G,
-    SEG_A | SEG_E | SEG_F | SEG_G,
-    0, 0
-  };
-  display.setSegments(FF_segments);
-}
-
-void displayIdle() { display.showNumberDec(0, true); }
-
-void displayMotorRunning() {
-  if (!motorRunning) return displayIdle();
-
-  unsigned long elapsedMs = millis() - motorStartTime;
-  unsigned long elapsedMin = elapsedMs / 60000UL;
-  unsigned long remainingMin = (motorRunDuration + 59999UL) / 60000UL; 
-  if (motorRunDuration > elapsedMs) {
-    unsigned long remMs = motorRunDuration - elapsedMs;
-    remainingMin = (remMs + 59999UL) / 60000UL;
-  } else {
-    remainingMin = 0;
-  }
-  if (remainingMin > 99) remainingMin = 99;
-  display.showNumberDec(remainingMin, true);
-}
-
-void startMotorForDuration(unsigned long durationMs) {
-  manualStopRequested = false;
-  motorRunning = true;
-  motorStartTime = millis();
-  motorRunDuration = durationMs;
-  digitalWrite(MOTOR_PIN, HIGH);
-  displayMotorRunning();
-  device_data.mstate = 1;
-  eeprom_write_data("1", 1, "m_on");
-}
-
-void stopMotorImmediate() {
-  motorRunning = false;
-  motorRunDuration = 0;
-  digitalWrite(MOTOR_PIN, LOW);
-  displayIdle();
-}
-
-void handleMotorRun() {
-  if (manualStopRequested) {
-    if (motorRunning) stopMotorImmediate();
-    manualStopRequested = false;
-    return;
-  }
-
-  if (motorRunning) {
-    unsigned long elapsedMs = millis() - motorStartTime;
-
-    if (scheduleInProgress) {
-      if (motorRunDuration > elapsedMs)
-        scheduledRemainingMs = motorRunDuration - elapsedMs;
-      else
-        scheduledRemainingMs = 0;
-
-      if (millis() - lastScheduleSaveMs >= SCHEDULE_SAVE_INTERVAL_MS) {
-      }
-    }
-
-    if (elapsedMs >= motorRunDuration) {
-      stopMotorImmediate();
-      device_data.mstate = 0;
-
-      scheduleInProgress = false;
-      scheduledRemainingMs = 0;
-    }
-  }
-}
-
-void HandleLocalChanges(String result) {
-  if (result.length() < 6) return;
-  StaticJsonDocument<8192> doc;
-  DeserializationError err = deserializeJson(doc, result);
-  if (err) {
-    Serial.print("JSON parse failed: ");
-    Serial.println(err.c_str());
-    return;
-  }
-
-  if (!doc.containsKey("table") || !doc.containsKey("record")) return;
-  JsonObject record = doc["record"].as<JsonObject>();
-
-  device_data.mstate = record["state"].as<bool>();
-  device_data.sch1_en = record["sch1_en"].as<bool>();
-  device_data.sch2_en = record["sch2_en"].as<bool>();
-  device_data.sch3_en = record["sch3_en"].as<bool>();
-
-  strlcpy(device_data.sch1_start, record["sch1_start"] | "", 6);
-  strlcpy(device_data.sch2_start, record["sch2_start"] | "", 6);
-  strlcpy(device_data.sch3_start, record["sch3_start"] | "", 6);
-
-  device_data.sch1_duration = record["sch1_duration"] | 0;
-  device_data.sch2_duration = record["sch2_duration"] | 0;
-  device_data.sch3_duration = record["sch3_duration"] | 0;
-
-
-
-  if (device_data.mstate && !motorRunning) {
-
-    digitalWrite(MOTOR_PIN, HIGH);
-  } else if (!device_data.mstate && !motorRunning) {
-    digitalWrite(MOTOR_PIN, LOW);
-  }
-
-  Serial.print(rt1.day());
-  Serial.print("/");
-  Serial.print(rt1.month());
-  Serial.print("/");
-  Serial.print(rt1.year());
-  Serial.print("  ");
-
-  Serial.print(rt1.hour());
-  Serial.print(":");
-  Serial.print(rt1.minute());
-  Serial.print(":");
-  Serial.println(rt1.second());
 }
 
 void process_RemoteEvents(String result)
@@ -696,9 +526,11 @@ void process_RemoteEvents(String result)
     if (state != device_data.mstate){
       if (device_data.mstate==0){
         device_data.mstate=1;
+        device_data.manual_state=1;
         digitalWrite(MOTOR_PIN, HIGH);
       }else{
         device_data.mstate=0;
+        device_data.manual_state=0;
         digitalWrite(MOTOR_PIN, LOW);
       }
     }
@@ -727,55 +559,6 @@ void process_RemoteEvents(String result)
   }
 }
 
-bool connectWiFiBlocking() {
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) {
-    delay(300);
-    Serial.print(".");
-  }
-  return WiFi.status() == WL_CONNECTED;
-}
-
-void wifiReconnectNonBlocking() {
-  int tcount=0;
-  
-  if(WiFi.status() != WL_CONNECTED){
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      delay(200);
-      Serial.print(".");
-      if(tcount>=60){
-        return;
-      }
-    }
-    connectSupabase();
-    Serial.println("\nConnected!");
-  }
-
-}
-
-void GetTime() {
-    client.setInsecure();
-    https.begin(client, gettime_url);
-    // Add your headers
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU");
-    int httpCode = https.GET();
-    Serial.print("Response Code: ");
-    if(httpCode==200){
-      Serial.println(httpCode);
-      dt_payload = https.getString();
-      updateRTCfromJSON(dt_payload);
-      Serial.println("RAW:");
-      Serial.println(dt_payload);
-      } else {
-      Serial.println("Error on HTTP request");  
-    }
-    https.end();
-}
-
 void connectSupabase() {
   Serial.println("Connecting to Supabase...");
   if (WiFi.status() != WL_CONNECTED) return;
@@ -790,20 +573,6 @@ void connectSupabase() {
 
 }
 
-void Init_Localtimer() {
-  Wire.begin(D6, D5);   // SDA, SCL for NodeMCU
-
-  if (!rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    while (1);
-  }
-
-  if (!rtc.isrunning()) {
-    Serial.println("RTC not running, setting time...");
-    rtc.adjust(DateTime(2025, 11, 22, 15, 30, 00)); // Set time from your PC
-  }
-} 
-
 void setup() {
   Serial.begin(115200);
   EEPROM.begin(EEPROM_SIZE);
@@ -815,30 +584,22 @@ void setup() {
   pinMode(auto_status, OUTPUT);
   display.setBrightness(0x0f);
   display.clear();
-  if(rtc.begin()==true){
-    rtc.adjust(DateTime(2000, 1, 1, 12, 0, 0));
+  bool rtc_status = rtc.begin();
+  delay(2000);
+  if(rtc_status==true){
+    //rtc.adjust(DateTime(2000, 1, 1, 12, 0, 0));
     Serial.println("RTC Found and Set");
   }else{
     Serial.println("RTC Not Found");
   }
   init_devicedata();
-  Serial.println(eeprom_readString(20));
 
-  /*
-  
-  if (scheduleInProgress && scheduledRemainingMs > 0) {
-    if (digitalRead(ot_sensor) == HIGH) {
-      startMotorForDuration(scheduledRemainingMs);
-      saveScheduledState();
-    } else {
-      Serial.println("Persisted scheduled run found but OT sensor is LOW - not starting.");
-    }
-  } */
+
 }
 
 void loop() {
   now = millis();
-  process_localevents();
+  process_LocalEvents();
   realtime.loop();
   Serial.println("....------.");
   Serial.println(".....");

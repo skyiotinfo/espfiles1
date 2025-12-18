@@ -86,3 +86,26 @@ String readString(int address) {
   }
   return data;
 }
+
+/*
+
+void GetTime() {
+    client.setInsecure();
+    https.begin(client, gettime_url);
+    // Add your headers
+    https.addHeader("Content-Type", "application/json");
+    https.addHeader("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU");
+    int httpCode = https.GET();
+    Serial.print("Response Code: ");
+    if(httpCode==200){
+      Serial.println(httpCode);
+      dt_payload = https.getString();
+      updateRTCfromJSON(dt_payload);
+      Serial.println("RAW:");
+      Serial.println(dt_payload);
+      } else {
+      Serial.println("Error on HTTP request");  
+    }
+    https.end();
+} 
+*/
