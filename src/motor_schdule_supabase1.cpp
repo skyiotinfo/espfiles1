@@ -11,8 +11,6 @@
 #include <ESP8266httpClient.h>
 
 RTC_DS1307 rtc;
-WiFiClientSecure client;
-HTTPClient https;
 
 const char* gettime_url = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/functions/v1/bright-function/time";
 
@@ -56,7 +54,7 @@ unsigned long now;
 
 SupabaseRealtime realtime;
 Supabase db;
-String JSON = "1";
+  
 
 unsigned long lastCheck = 0;
 bool motorRunning = false;
@@ -78,17 +76,18 @@ bool manualStopRequested = false;
 const unsigned long SCHEDULE_SAVE_INTERVAL_MS = 5000;
 unsigned long lastScheduleSaveMs = 0;
 
-const char* WIFI_SSID = "sm42";
-const char* WIFI_PASS = "chai1111";
+//const char* WIFI_SSID = "sm42";
+//const char* WIFI_PASS = "chai1111";
 
-//const char* WIFI_SSID = "Airtel_9764005401";
-//const char* WIFI_PASS = "air46403";
+const char* WIFI_SSID = "Airtel_9764005401";
+const char* WIFI_PASS = "air46403";
 
  
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
 const char* USER_EMAIL = "1234567890@gmail.com";
 const char* USER_PASS = "1234";
+const char* TOKEN = "eyJhbGciOiJIUzI1NiIsImtpZCI6IkVEVFJka0dxODdpbVJwV2oiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2ZrZ2ZkZ3dwcXFmeGhueXV3dHdlLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJjNmJjNjM4My00NmUyLTRkZjQtYTgxYS0zZDI1ZTc1ZDYzZTciLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY2NDI3OTcxLCJpYXQiOjE3NjY0MjQzNzEsImVtYWlsIjoiMTIzNDU2Nzg5MEBnbWFpbC5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2NjQyNDM3MX1dLCJzZXNzaW9uX2lkIjoiZDg3YzgwMWEtZWI4Zi00ZGRmLTk4OTYtMGU1MzE5ODhlYTAyIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.hOG9jTyImzG9JbCO-L1qIAMIwP6Hwbbmgw7fWmg6VgY";
   
 
 bool wifiWasConnected = false;
@@ -234,23 +233,66 @@ time_t toUnix(
   return mktime(&t);
 }
 
+void updateTable(String token, int st){
+  WiFiClientSecure client;
+  client.setInsecure(); // skip SSL validation (OK for ESP)
+
+  HTTPClient https;
+  const char* supabaseUrl = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.167";
+  client.setInsecure(); // skip SSL validation (OK for ESP)
+  https.begin(client, supabaseUrl);
+
+  https.addHeader("apikey", SUPABASE_KEY);
+  https.addHeader("Authorization", "Bearer " + String(token));
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Prefer", "return=minimal");
+
+  StaticJsonDocument<16> doc;
+  doc["state"] = st;  
+ 
+  String payload;
+  serializeJson(doc, payload);
+
+  //String payload = R"({
+  //  "state": st
+  //})";
+
+  int httpCode = https.sendRequest("PATCH", payload);
+
+  Serial.print("HTTP Code: ");
+  Serial.println(httpCode); 
+
+  https.end();
+}
+
 void process_LocalEvents(){
   if (digitalRead(input1) == LOW && device_data.mstate == 0) {
     device_data.mstate = 1;
     device_data.manual_state = 1;
+    StaticJsonDocument<16> doc; 
     digitalWrite(MOTOR_PIN, HIGH);
     Serial.println("Motor Turned ON via Local Button");
-    int code = db.update("pump_motor").eq("column", "state").doUpdate(JSON);
-    delay(1000);
-    Serial.println(code);
-    db.urlQuery_reset();
-    
+    realtime.end();
+    updateTable(realtime.update_d(),1);
+    delay(500);
+    //db.begin(SUPABASE_URL, SUPABASE_KEY);
+    //db.login_email(USER_EMAIL, USER_PASS);
+    //int code = db.update("pump_motor").eq("id","167").doUpdate("{\"state\":1}");
+    //Serial.println(code);
   }
   else if (digitalRead(input1) == LOW && device_data.mstate == 1) {
     device_data.mstate = 0;
     device_data.manual_state = 0;
     digitalWrite(MOTOR_PIN, LOW);
     Serial.println("Motor Turned OFF via Local Button");
+    realtime.end();
+    updateTable(realtime.update_d(),0);
+    delay(500);
+    //StaticJsonDocument<16> doc; 
+    //db.begin(SUPABASE_URL, SUPABASE_KEY);
+    //db.login_email(USER_EMAIL, USER_PASS);
+    //int code = db.update("pump_motor").eq("id","167").doUpdate("{\"state\":0}");
+    //Serial.println(code);
   }
 
 
@@ -594,14 +636,11 @@ void setup() {
   }
   init_devicedata();
 
-
 }
 
 void loop() {
   now = millis();
   process_LocalEvents();
   realtime.loop();
-  Serial.println("....------.");
-  Serial.println(".....");
   delay(200);
 }
