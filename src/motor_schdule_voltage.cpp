@@ -25,6 +25,12 @@ unsigned long lastVoltageRead = 0;
 const unsigned long VOLTAGE_READ_INTERVAL = 2000;
                       
 
+const uint8_t seg_full[] = {
+  SEG_A | SEG_E | SEG_F | SEG_G,                 
+  SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,         
+  SEG_D | SEG_E | SEG_F,                         
+  SEG_D | SEG_E | SEG_F                          
+};
 
 PZEM004Tv30 pzem1(4, 14); 
 
@@ -183,11 +189,14 @@ void setup() {
   WiFiManager wm;
   wm.setConfigPortalTimeout(180);
   if (!wm.autoConnect("Setup_WiFi", "admin123")) {
-    Serial.println("Failed to connect via portal; rebooting...");
-    delay(3000);
-    ESP.restart();
+    Serial.println("Failed to connect via portal. Switching to manual mode...");
+    manualMode = true;
   }
-  Serial.println("WiFi connected.");
+  else {
+    Serial.println("WiFi connected.");
+    manualMode = false;
+  }
+
 
   manualMode = false;
   getScheduleFromFirebase();
@@ -204,11 +213,6 @@ void loop() {
   CURRENT = zeroIfNan(CURRENT);
   POWER = pzem1.power();
   POWER = zeroIfNan(POWER);
-
-  Serial.printf("Voltage        : %.2f\ V\n", VOLTAGE);
-  Serial.printf("Current        : %.2f\ A\n", CURRENT);
-  Serial.printf("Power Active   : %.2f\ W\n", POWER);
-
   ot_sensorstatus = digitalRead(ot_sensor);
   //ut_sensorstatus = digitalRead(ut_sensor);
 
@@ -341,12 +345,15 @@ if (lastBtnState == HIGH && currBtnState == LOW) {
  
     if (ot_sensorstatus == 0) {
       ot_sensorcount++;
-      if (ot_sensorcount >= 100) {
+      if (ot_sensorcount >= 50) {
         motor_status = 0;
         ot_sensorcount = 0;
         digitalWrite(buzzer, LOW);
         digitalWrite(auto_status, LOW);
         display.showNumberDec(0, false);
+        delay(300);
+        display.clear();
+        display.setSegments(seg_full);
         motor_time = motor_duration * 60;
         if (currentScheduleIndex != -1) scheduleCompleted[currentScheduleIndex] = true;
       }

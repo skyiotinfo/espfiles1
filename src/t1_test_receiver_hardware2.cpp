@@ -3,10 +3,9 @@
 #include <WiFiClientSecure.h>
 #include <time.h>
 
-const char* ssid = "TI IndustriesExt";
-const char* password = "9845574336";
-const char* serverName = "https://anupam-32ea7-default-rtdb.firebaseio.com/user/uid/1011.json";
-
+const char* ssid = "Anupam";
+const char* password = "12345678";
+const char* serverName = "https://esp-02.asia-southeast1.firebasedatabase.app/users/uid/10103.json";
 int sdevice[8] = {0};
 int prev_sdevice[8] = {0};
 String etime[8];

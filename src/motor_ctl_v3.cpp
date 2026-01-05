@@ -104,7 +104,7 @@ void setup() {
         motor_duration=3;
   }
    
-  digitalWrite(buzzer,LOW);
+  digitalWrite(buzzer,HIGH);
   //Set motor time duration*5 
   motor_time=(motor_duration*60)*10;
   empty_start=0;

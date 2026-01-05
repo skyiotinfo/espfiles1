@@ -24,12 +24,12 @@ int cdstatus[] = {0,0,0,0,0,0,0,0};
 int st = 2;
 int minval = 0;
 char motor_st = 'S';
-int timeout_val = 70;
+int timeout_val = 20;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   Wire.begin(2, 0);
   lcd.init();
   lcd.backlight();
@@ -141,6 +141,8 @@ void loop() {
     if (current_cnt < 1 && digitalRead(buzzer) == 1) {
       digitalWrite(buzzer, LOW);
       motor_st = 'S';
+      
+      delay(18*1000);
       ESP.restart();
     }
 

@@ -34,6 +34,8 @@ int count = 0;
 int sound = 0;
 int temp_count1 = 0;
 
+unsigned long lastLoRaReceiveTime = 0;
+unsigned long loRaTimeout = 30000;  // 30 seconds timeout
 
 const uint8_t seg_empty[] = {
   0x00,
@@ -50,10 +52,10 @@ const uint8_t seg_full[] = {
 };
 
 const uint8_t seg_nodata[] = {
-  SEG_A | SEG_E | SEG_F | SEG_G,               
-  SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,      
-  SEG_D | SEG_E | SEG_F,                       
-  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G        
+  SEG_A | SEG_E | SEG_F | SEG_G,               // n
+  SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,       // o
+  SEG_D | SEG_E | SEG_F,                       // d
+  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G        // A
 };
 
 TM1637Display display(CLK, DIO);
@@ -66,6 +68,7 @@ void setup() {
   pinMode(buzzer, OUTPUT);
   digitalWrite(buzzer, LOW);
   motor_status = 0;
+ // send_data();
   delay(1000);
 
   memval1 = EEPROM.read(addr1);
@@ -131,9 +134,19 @@ void setup() {
     delay(500);
   }
 
+  lastLoRaReceiveTime = millis();  // Start timeout timer
 }
+void send_data() {
+  LoRa.beginPacket();
+  LoRa.print("R");
+  LoRa.print(motor_status);
+  LoRa.endPacket();
 
+  Serial.print("Motor Reply Sent: R");
+  Serial.println(motor_status);
+}
 void loop() {
+    
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     String LoRaData = LoRa.readString();
@@ -146,14 +159,15 @@ void loop() {
     Serial.println(deviceid);
     Serial.println(devicestatus);
 
-    if (deviceid.equals("2010") && devicestatus.equals("00")) {
+    if (deviceid.equals("2015") && devicestatus.equals("00")) {
       display.clear();
       display.setSegments(seg_full);
       delay(500);
       tcount1++;
-      if (tcount1 >= 4 && digitalRead(buzzer) == 1) {
+      if (tcount1 >= 3 && digitalRead(buzzer) == 1) {
         digitalWrite(buzzer, LOW);
         motor_status = 0;
+        send_data();
         display.showNumberDec(0, false);
         motor_time = motor_duration * 60;
         tcount1 = 0;
@@ -163,13 +177,14 @@ void loop() {
       tcount1 = 0;
     }
 
-    if (deviceid.equals("2010") && devicestatus.equals("11")) {
+    if (deviceid.equals("2015") && devicestatus.equals("11")) {
       tcount2++;
       display.clear();
       display.setSegments(seg_empty);
-      if (tcount2 >= 4) {
+      if (tcount2 >= 3) {
         digitalWrite(buzzer, HIGH);
         motor_status = 1;
+        send_data();
         tcount2 = 0;
         sensor_status = 1;
       }
@@ -177,7 +192,7 @@ void loop() {
       tcount2 = 0;
     }
 
-    if (deviceid.equals("2010") && devicestatus.equals("22")) {
+    if (deviceid.equals("2015") && devicestatus.equals("22")) {
       tcount3++;
       if (tcount3 >= 2) {
         Serial.println("Tank No Data.........");
@@ -188,6 +203,7 @@ void loop() {
       tcount3 = 0;
     }
 
+    lastLoRaReceiveTime = millis();  // Reset timeout timer
     Serial.print("RSSI :");
     Serial.println(LoRa.packetRssi());
   }
@@ -206,12 +222,14 @@ void loop() {
     if (digitalRead(buzzer) == 0) {
       digitalWrite(buzzer, HIGH);
       motor_status = 1;
+      send_data();
       motor_time = motor_duration * 60;
       value_count = 15;
     } else {
       digitalWrite(buzzer, LOW);
       display.showNumberDec(0, false);
       motor_status = 0;
+      send_data();
       value_count = 0;
     }
   }
@@ -226,6 +244,7 @@ void loop() {
         display.clear();
         digitalWrite(buzzer, LOW);
         motor_status = 0;
+        send_data();
         temp_count1 = 0;
         display.showNumberDec(0, false);
         motor_time = motor_duration * 60;
@@ -235,6 +254,18 @@ void loop() {
     }
     delay(500);
   }
+
+  if (millis() - lastLoRaReceiveTime > loRaTimeout && sensor_status != 2) {
+    Serial.println("No LoRa data received. Switching to default (No Data) mode.");
+    sensor_status = 2;
+    display.clear();
+    display.setSegments(seg_nodata);
+    digitalWrite(buzzer, LOW);
+    motor_status = 0;
+    send_data();
+    motor_time = motor_duration * 60;
+  }
+
   delay(500);
   count++;
 }

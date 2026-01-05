@@ -6,7 +6,7 @@
 #define ss 15
 #define rst 16
 #define dio0 2
-#define networkid "2010"
+#define networkid "2015"
 #define deviceid "01"
  
 int counter = 1;

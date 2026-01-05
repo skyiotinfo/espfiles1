@@ -1,12 +1,12 @@
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 #include <TM1637Display.h>
-#include <EEPROM.h>
 
 #define CLK D3
 #define DIO D4
 #define buzzer D2
 #define input1 D9
+#define potPin A0  
 
 uint8_t broadcastAddress[] = {0x3C, 0x61, 0x05, 0xDC, 0x6A, 0x29};
 
@@ -27,15 +27,16 @@ const uint8_t seg_full[] = {
 };
 
 typedef struct struct_message {
-  char message[64];  
+  char message[64];
 } struct_message;
 
 struct_message incomingmsg;
 
 int motor_status = 0;
-int motor_duration = 30;
+int motor_duration = 30;  
 int motor_time = 0;
-int sensor_status = 2; 
+int sensor_status = 2;
+
 int tcount1 = 0, tcount2 = 0, tcount3 = 0;
 int temp_count1 = 0;
 
@@ -98,7 +99,6 @@ void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
 
 void setup() {
   Serial.begin(115200);
-  EEPROM.begin(512);
 
   pinMode(buzzer, OUTPUT);
   pinMode(input1, INPUT_PULLUP);
@@ -119,16 +119,20 @@ void setup() {
   esp_now_register_recv_cb(OnDataRecv);
   esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
 
-  motor_duration = EEPROM.read(0);
-  if (motor_duration < 1 || motor_duration > 180) {
-    motor_duration = 30;
-  }
+
+  int potValue = analogRead(potPin);
+  motor_duration = map(potValue, 0, 1023, 1, 180);
   motor_time = motor_duration * 60;
+
+  Serial.print("Initial Motor duration (from potentiometer): ");
+  Serial.print(motor_duration);
+  Serial.println(" minutes");
 
   Serial.println("ESP-NOW Receiver Ready");
 }
 
 void loop() {
+
   if (digitalRead(input1) == 0) {
     Serial.println("Manual Button Pressed");
     if (digitalRead(buzzer) == 0) {
@@ -136,16 +140,14 @@ void loop() {
       motor_status = 1;
       motor_time = motor_duration * 60;
     } else {
-      if(digitalRead(buzzer)==1)
-      {
-        digitalWrite(buzzer,LOW);
-        Serial.println("Motor is now stopped..!");
-        motor_status=0;
-      }
+      digitalWrite(buzzer, LOW);
+      Serial.println("Motor is now stopped..!");
+      motor_status = 0;
     }
     delay(1000);
   }
 
+ 
   if (motor_status == 1) {
     motor_time--;
     display.showNumberDec((motor_time / 60) + 1, false);
@@ -163,6 +165,18 @@ void loop() {
     }
     delay(1000);
   } else {
+  
+    int potValue = analogRead(potPin);
+    int newMotorDuration = map(potValue, 0, 1023, 1, 180);
+
+    if (newMotorDuration != motor_duration) {
+      motor_duration = newMotorDuration;
+      motor_time = motor_duration * 60;
+      Serial.print("Updated motor duration: ");
+      Serial.print(motor_duration);
+      Serial.println(" minutes");
+    }
+
     delay(500);
   }
 }
