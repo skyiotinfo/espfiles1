@@ -30,9 +30,12 @@ const int ot_sensor = D1;
 const int ot_status = D2;
 const int auto_status = D7;
 const int input1 = D9;
+int temp_count1 = 0;
+
 void GetTime();
 void connectSupabase();
 void displayIdle();
+void process_RemoteEvents(String result);
 String eeprom_readString(int address);
 TM1637Display display(CLK_PIN, DIO_PIN);
 String dt_payload = "";
@@ -53,8 +56,6 @@ const unsigned long EXECUTION_INTERVAL = 20000; // 20 Second in milliseconds
 unsigned long now;
 
 SupabaseRealtime realtime;
-Supabase db;
-  
 
 unsigned long lastCheck = 0;
 bool motorRunning = false;
@@ -76,19 +77,17 @@ bool manualStopRequested = false;
 const unsigned long SCHEDULE_SAVE_INTERVAL_MS = 5000;
 unsigned long lastScheduleSaveMs = 0;
 
-//const char* WIFI_SSID = "sm42";
-//const char* WIFI_PASS = "chai1111";
+const char* WIFI_SSID = "sm42";
+const char* WIFI_PASS = "chai1111";
 
-const char* WIFI_SSID = "Airtel_9764005401";
-const char* WIFI_PASS = "air46403";
+//const char* WIFI_SSID = "Airtel_9764005401";
+//const char* WIFI_PASS = "air46403";
 
  
 const char* SUPABASE_URL = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 const char* SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
 const char* USER_EMAIL = "1234567890@gmail.com";
 const char* USER_PASS = "1234";
-const char* TOKEN = "eyJhbGciOiJIUzI1NiIsImtpZCI6IkVEVFJka0dxODdpbVJwV2oiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2ZrZ2ZkZ3dwcXFmeGhueXV3dHdlLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJjNmJjNjM4My00NmUyLTRkZjQtYTgxYS0zZDI1ZTc1ZDYzZTciLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY2NDI3OTcxLCJpYXQiOjE3NjY0MjQzNzEsImVtYWlsIjoiMTIzNDU2Nzg5MEBnbWFpbC5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2NjQyNDM3MX1dLCJzZXNzaW9uX2lkIjoiZDg3YzgwMWEtZWI4Zi00ZGRmLTk4OTYtMGU1MzE5ODhlYTAyIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.hOG9jTyImzG9JbCO-L1qIAMIwP6Hwbbmgw7fWmg6VgY";
-  
 
 bool wifiWasConnected = false;
 bool supabaseConnected = false;
@@ -247,15 +246,7 @@ void updateTable(String token, int st){
   https.addHeader("Content-Type", "application/json");
   https.addHeader("Prefer", "return=minimal");
 
-  StaticJsonDocument<16> doc;
-  doc["state"] = st;  
- 
-  String payload;
-  serializeJson(doc, payload);
-
-  //String payload = R"({
-  //  "state": st
-  //})";
+  String payload = "{\"state\": " + String(st) + "}";
 
   int httpCode = https.sendRequest("PATCH", payload);
 
@@ -272,36 +263,44 @@ void process_LocalEvents(){
     StaticJsonDocument<16> doc; 
     digitalWrite(MOTOR_PIN, HIGH);
     Serial.println("Motor Turned ON via Local Button");
-    realtime.end();
-    updateTable(realtime.update_d(),1);
-    delay(500);
-    //db.begin(SUPABASE_URL, SUPABASE_KEY);
-    //db.login_email(USER_EMAIL, USER_PASS);
-    //int code = db.update("pump_motor").eq("id","167").doUpdate("{\"state\":1}");
-    //Serial.println(code);
-  }
-  else if (digitalRead(input1) == LOW && device_data.mstate == 1) {
+    if(realtime.ws_status == 1){
+      realtime.end();
+      delay(1000);
+      updateTable(realtime.update_d(), 1);
+      delay(500);
+      realtime.begin(SUPABASE_URL, SUPABASE_KEY, process_RemoteEvents);
+      realtime.login_email(USER_EMAIL, USER_PASS);
+      realtime.addChangesListener("pump_motor", "*", "public", "");
+      realtime.listen();
+      supabaseConnected = true;
+    }
+    }
+    else if (digitalRead(input1) == LOW && device_data.mstate == 1) {
     device_data.mstate = 0;
     device_data.manual_state = 0;
     digitalWrite(MOTOR_PIN, LOW);
     Serial.println("Motor Turned OFF via Local Button");
-    realtime.end();
-    updateTable(realtime.update_d(),0);
-    delay(500);
-    //StaticJsonDocument<16> doc; 
-    //db.begin(SUPABASE_URL, SUPABASE_KEY);
-    //db.login_email(USER_EMAIL, USER_PASS);
-    //int code = db.update("pump_motor").eq("id","167").doUpdate("{\"state\":0}");
-    //Serial.println(code);
+    if(realtime.ws_status == 1){
+      realtime.end();
+      delay(1000);  
+      updateTable(realtime.update_d(),0); 
+      delay(500);
+      realtime.begin(SUPABASE_URL, SUPABASE_KEY, process_RemoteEvents);
+      realtime.login_email(USER_EMAIL, USER_PASS);
+      realtime.addChangesListener("pump_motor", "*", "public", "");
+      realtime.listen();
+      supabaseConnected = true;
+    }
   }
 
 
+  // Scheduled Task Execution - Runs every EXECUTION_INTERVAL
   if (now - lastExecutionTime >= EXECUTION_INTERVAL) {
     lastExecutionTime = now;
-
     if(WiFi.status() != WL_CONNECTED)
     {
       supabaseConnected=false;
+      realtime.end();
       WiFi.begin(WIFI_SSID, WIFI_PASS);
     }
     if(WiFi.status() == WL_CONNECTED){
@@ -309,9 +308,7 @@ void process_LocalEvents(){
           connectSupabase();
           init_time();
       }
-
     }
-
     Serial.println("Checking scheduled tasks...");
     Serial.println("Current Time: " + String(rtc.now().hour()) + ":" + String(rtc.now().minute()));
     Serial.println("Scheduled Time: " + String(device_data.hour) + ":" + String(device_data.minute));
@@ -338,6 +335,17 @@ void process_LocalEvents(){
             Serial.println("Device Manually Running..");
           }
         }
+    }
+  }
+
+  // Read local sensor status
+  if(digitalRead(ot_sensor) == LOW){ 
+    temp_count1 = temp_count1 + 1;
+    if(temp_count1 >= 10){
+      digitalWrite(MOTOR_PIN, LOW);
+      device_data.mstate = 0;
+      Serial.println("Motor Turned OFF - Tank Full Detected");
+      temp_count1 = 0;
     }
   }
 }
@@ -533,7 +541,6 @@ int eeprom_read_int(int addr, int duration, String read_data) {
     return 999;
 }
 
-// line 481 - This is referance code .....
 String eeprom_readString(int address) {
   String data = "";
   char ch;
@@ -627,15 +634,13 @@ void setup() {
   display.setBrightness(0x0f);
   display.clear();
   bool rtc_status = rtc.begin();
-  delay(2000);
+  delay(1000);
   if(rtc_status==true){
-    //rtc.adjust(DateTime(2000, 1, 1, 12, 0, 0));
     Serial.println("RTC Found and Set");
   }else{
     Serial.println("RTC Not Found");
   }
   init_devicedata();
-
 }
 
 void loop() {

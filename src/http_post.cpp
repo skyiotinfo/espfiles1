@@ -69,3 +69,9 @@ void loop() {
  
   delay(10000);  //Send a request every 30 seconds
 }
+
+
+    //db.begin(SUPABASE_URL, SUPABASE_KEY);
+    //db.login_email(USER_EMAIL, USER_PASS);
+    //int code = db.update("pump_motor").eq("id","167").doUpdate("{\"state\":1}");
+    //Serial.println(code);
