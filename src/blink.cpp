@@ -1,23 +1,21 @@
 #include <Arduino.h>
 
-const int pin=LED_BUILTIN;
-const int apin=A0;
-
+const int input1 = D9;
 
 void setup()
 
 {
   Serial.begin(115200); 
-  pinMode(pin, OUTPUT);
+  pinMode(input1, INPUT_PULLUP);
 }
 
 
 void loop(){
      
-  digitalWrite(pin, HIGH);
+  digitalWrite(vpin, HIGH);
   delay(3000);
    Serial.println("Blink");
-  digitalWrite(pin, LOW);
+  digitalWrite(vpin, LOW);
  delay(3000);
  Serial.println("Stop");
 

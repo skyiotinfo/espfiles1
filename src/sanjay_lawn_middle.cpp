@@ -9,8 +9,10 @@
 #define ss   D8
 #define rst  D0
 #define dio0 D4  
-#define WIFI_SSID "Anupam"
-#define WIFI_PASS "12345678"
+#define WIFI_SSID "Ofiice"
+#define WIFI_PASS "kgroups@9966"
+// #define WIFI_SSID "Anupam"
+// #define WIFI_PASS "12345678"
 int led=D8;
 
 #define SUPABASE_URL "https://fkgfdgwpqqfxhnyuwtwe.supabase.co"
@@ -56,6 +58,27 @@ String mapStatus(String raw) {
   if (raw == "00") return "0";
   return "";
 }
+void checkWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  Serial.println("WiFi disconnected! Reconnecting...");
+  digitalWrite(led, LOW);
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Reconnected!");
+    digitalWrite(led, HIGH);
+  } else {
+    Serial.println("\nWiFi Reconnect FAILED");
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -64,7 +87,11 @@ void setup() {
   digitalWrite(led, LOW);
   Serial.println("BOOT STARTED");
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+WiFi.mode(WIFI_STA);
+WiFi.setAutoReconnect(true);
+WiFi.persistent(true);
+WiFi.begin(WIFI_SSID, WIFI_PASS);
+
   Serial.print("Connecting WiFi");
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -87,6 +114,7 @@ void setup() {
 }
 
 void loop() {
+  checkWiFi();
 
   int packetSize = LoRa.parsePacket();
   if (!packetSize) {

@@ -40,9 +40,9 @@ int temp_count1 = 0;
 unsigned long lastLoRaReceiveTime = 0;
 unsigned long loRaTimeout = 30000;  
 unsigned long lastSendTime = 0;
-const unsigned long sendInterval = 300;   
+const unsigned long sendInterval = 1000;   
 int sendCount = 0;
-const int maxSendCount = 5;
+const int maxSendCount = 10;
 bool sendingActive = false;
 
 
