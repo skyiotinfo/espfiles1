@@ -105,7 +105,7 @@ void loop() {
     Serial.println("ERROR: No valid sensor reading");
     Serial.println("-----------------------------");
     delay(1000);
-    return;
+    //return;
   }
 
   distance = constrain(distance, MIN_DISTANCE, MAX_DISTANCE);

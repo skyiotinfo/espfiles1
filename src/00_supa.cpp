@@ -102,21 +102,24 @@ void setup() {
   pinMode(auto_status, OUTPUT);
   bool rtc_status = rtc.begin();
   delay(1000);
-  Wire.begin();
+  //Wire.begin();
 
-  if (!rtc.begin()) {
+  if (!rtc.isrunning()) {
     Serial.println("RTC not found");
-    while (1);
   }
 
-  readSchedulesFromEEPROM();
+  //readSchedulesFromEEPROM();
 }
 
 void loop() {
   DateTime now = getCurrentTime();
-
-  resetDailyTriggers(now);
-  checkSchedules(now);
+  if(digitalRead(input1) == LOW && rtc.isrunning()) { 
+    Serial.println("Clicked");
+    Serial.println(now.hour());
+    Serial.println(now.minute());
+    delay(500);  } 
+  //resetDailyTriggers(now);
+  //checkSchedules(now);
 
   delay(200);  // short delay is fine
 }
