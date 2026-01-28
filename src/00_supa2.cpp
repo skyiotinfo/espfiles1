@@ -10,9 +10,9 @@
  
 void compareAndSyncTime();
 void updateTable(String token, int st);
-int login_process(String email, String pass);
+//int login_process(String email, String pass);
 int login_email(String email_a, String password_a);
-int login_process();
+//int login_process();
  
 const int device_id = 10100101;
  
@@ -26,6 +26,10 @@ RTC_DS1307 rtc;
  
 #define EEPROM_SIZE 128
  
+#define EEPROM_START_UNIX_ADDR   0
+#define EEPROM_STOP_UNIX_ADDR    4
+ 
+ 
 #define MOTOR_PIN D8
 #define CLK_PIN   D3
 #define DIO_PIN   D4
@@ -36,9 +40,14 @@ int temp_count1 = 0;
  
 TM1637Display display(CLK_PIN, DIO_PIN);
  
+bool motor_status_manual = 0;
+ 
 unsigned long mili_now;
 unsigned long lastExecutionTime = 0;
 const unsigned long EXECUTION_INTERVAL = 10000; // Second in milliseconds
+uint32_t lastSavedStartUnix = 0;
+uint32_t lastSavedStopUnix  = 0;
+ 
  
 struct Schedule {
   time_t unixTime;   // scheduled unix time
@@ -102,6 +111,43 @@ void loadSchedules() {
     0//anupam
     };
 }
+  bool scheduleCancelledByApp = false;
+ 
+ 
+void saveScheduleToEEPROM() {
+  if (sch1.startUnix != lastSavedStartUnix ||
+      sch1.stopUnix  != lastSavedStopUnix) {
+ 
+    EEPROM.put(EEPROM_START_UNIX_ADDR, sch1.startUnix);
+    EEPROM.put(EEPROM_STOP_UNIX_ADDR, sch1.stopUnix);
+    EEPROM.commit();
+ 
+    lastSavedStartUnix = sch1.startUnix;
+    lastSavedStopUnix  = sch1.stopUnix;
+ 
+    Serial.println("Schedule changed → saved to EEPROM");
+  } else {
+    Serial.println("Schedule unchanged → EEPROM not written");
+  }
+}
+ 
+
+void loadScheduleFromEEPROM() {
+  EEPROM.get(EEPROM_START_UNIX_ADDR, sch1.startUnix);
+  EEPROM.get(EEPROM_STOP_UNIX_ADDR, sch1.stopUnix);
+ 
+  if (sch1.startUnix < 1000000000 || sch1.stopUnix < sch1.startUnix) {
+    Serial.println("Invalid EEPROM data, using defaults");
+    loadSchedules();
+    scheduleCancelledByApp = false;
+  }
+ 
+  sch1.active = false;
+ 
+  // Track last saved values
+  lastSavedStartUnix = sch1.startUnix;
+  lastSavedStopUnix  = sch1.stopUnix;
+}
  
 // Function to convert hour and minute to unix time (UTC) for today
 uint32_t hourMinuteToUnixUTC(uint8_t hour, uint8_t minute) {
@@ -118,9 +164,7 @@ uint32_t hourMinuteToUnixUTC(uint8_t hour, uint8_t minute) {
  
   return dt.unixtime();
 }
-  bool scheduleCancelledByApp = false;
   int lastAppState = -1;
- 
  
 // Function to check and execute schedule
 void checkSch(uint32_t nowUnix) {
@@ -193,79 +237,84 @@ void updateTable(String token, int st){
 }
  
 // Function to get data from the database table
-void getTableData(String token, String field){
-    const char* supabaseUrl = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.211";
+void getTableData(String token, String field)
+{
+    const char *supabaseUrl = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.211";
     https.begin(client, supabaseUrl);
     https.setTimeout(3000);
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", "Bearer " + String(token));
     https.addHeader("Content-Type", "application/json");
     https.addHeader("Prefer", "return=minimal");
- 
+
     int httpCode = https.GET();
     Serial.print("HTTP Code: ");
     Serial.println(httpCode);
-   
-    if (httpCode == 200) {
+
+    if (httpCode == 200)
+    {
         StaticJsonDocument<512> doc;
         deserializeJson(doc, https.getString());
- 
+
         uint32_t duration = doc[0]["sch1_duration"];
         updated_sch1.state = doc[0]["state"];
         bool appOffPressed = (lastAppState == 1 && updated_sch1.state == 0);
         lastAppState = updated_sch1.state;
- 
-if (!sch1.active) {
- 
-  if (updated_sch1.state == 1 && digitalRead(MOTOR_PIN) == LOW) {
-    digitalWrite(MOTOR_PIN, HIGH);
-    Serial.println("Motor ON from App");
-  }
- 
-  if (updated_sch1.state == 0 && digitalRead(MOTOR_PIN) == HIGH) {
-    digitalWrite(MOTOR_PIN, LOW);
-    Serial.println("Motor OFF from App");
-  }
-}
-    // Parse schedule times from server
- 
+
+        if (!sch1.active)
+        {
+
+            if (updated_sch1.state == 1 && digitalRead(MOTOR_PIN) == LOW)
+            {
+                digitalWrite(MOTOR_PIN, HIGH);
+                Serial.println("Motor ON from App");
+            }
+
+            if (updated_sch1.state == 0 && digitalRead(MOTOR_PIN) == HIGH)
+            {
+                digitalWrite(MOTOR_PIN, LOW);
+                Serial.println("Motor OFF from App");
+            }
+        }
+        // Parse schedule times from server
+
         String schTime = doc[0]["sch1_start"];
         u_int16_t s1 = schTime.substring(0, 2).toInt();
         u_int16_t s2 = schTime.substring(3, 5).toInt();
         updated_sch1.startUnix = hourMinuteToUnixUTC(s1, s2);
         updated_sch1.stopUnix = updated_sch1.startUnix + (duration * 60);
         // If a new schedule window is received (future schedule), allow it
-if (scheduleCancelledByApp &&
-    updated_sch1.startUnix > rtc.now().unixtime()) {
- 
-    scheduleCancelledByApp = false;
-    Serial.println("New schedule detected – cancellation cleared");
-}
- 
- 
-if (sch1.active && appOffPressed) {
-    sch1.active = false;
-    scheduleCancelledByApp = true;
-    digitalWrite(MOTOR_PIN, LOW);
-    Serial.println("Schedule cancelled by App OFF");
-}
- 
- 
- 
- else {
-  if (!sch1.active) {
-    sch1.startUnix = updated_sch1.startUnix;
-    sch1.stopUnix  = updated_sch1.stopUnix;
-  }
- 
-}
-        https.end();
+        if (scheduleCancelledByApp &&
+            updated_sch1.startUnix > rtc.now().unixtime())
+        {
+
+            scheduleCancelledByApp = false;
+            Serial.println("New schedule detected – cancellation cleared");
+        }
+
+        if (sch1.active && appOffPressed)
+        {
+            sch1.active = false;
+            scheduleCancelledByApp = true;
+            digitalWrite(MOTOR_PIN, LOW);
+            Serial.println("Schedule cancelled by App OFF");
+        }
+
+        if (!sch1.active &&
+            (sch1.startUnix != updated_sch1.startUnix ||
+             sch1.stopUnix != updated_sch1.stopUnix))
+        {
+
+            sch1.startUnix = updated_sch1.startUnix;
+            sch1.stopUnix = updated_sch1.stopUnix;
+            saveScheduleToEEPROM();
+        }
+
         Serial.println();
     }
     https.end();
 }
- 
- 
+
 // Function to get internet time
 bool getInternetUnixTime(time_t &unixTime) {
   if (!isOnline()) return false;
@@ -341,6 +390,43 @@ void process_LocalEvents()
         scheduleCancelledByApp = false;
         lastDay = now.day();
         Serial.println("New day – app cancellation reset");
+    }
+
+    // ===== MANUAL BUTTON OVERRIDE =====
+    if (digitalRead(input1) == LOW)
+    {
+        delay(50); // debounce
+
+        if (digitalRead(input1) == LOW)
+        {
+            Serial.println("Manual Button Pressed");
+
+            // If schedule is running and motor is ON → cancel schedule
+            if (sch1.active && digitalRead(MOTOR_PIN) == HIGH)
+            {
+                sch1.active = false;
+                scheduleCancelledByApp = true;
+                Serial.println("Schedule cancelled by Manual Button");
+            }
+
+            // Toggle motor
+            if (digitalRead(MOTOR_PIN) == HIGH)
+            {
+                digitalWrite(MOTOR_PIN, LOW);
+                motor_status_manual = 0;
+                updateTable(USER_TOKEN, 0);
+                Serial.println("Motor OFF by Button");
+            }
+            else
+            {
+                digitalWrite(MOTOR_PIN, HIGH);
+                motor_status_manual = 1;
+                updateTable(USER_TOKEN, 1);
+                Serial.println("Motor ON by Button");
+            }
+
+            delay(500); // prevent multiple triggers
+        }
     }
 
     if (mili_now - lastExecutionTime >= EXECUTION_INTERVAL)
@@ -486,7 +572,7 @@ void setup() {
   }else{
     Serial.println("RTC Not Found");
   }
-  loadSchedules();
+  loadScheduleFromEEPROM();
 }
  
 // Arduino loop function
@@ -495,3 +581,4 @@ void loop() {
   process_LocalEvents();
   delay(500);
 }
+ 
