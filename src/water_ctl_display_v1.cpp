@@ -75,6 +75,24 @@ void setup() {
   memval1=EEPROM.read(addr1);
   motor_duration=memval1;
 
+  // Read analog input (A0) and map 0-1023 to motor duration 10-100 minutes
+  int analogVal = analogRead(A0);
+  int mappedDuration = map(analogVal, 0, 1023, 10, 100);
+  mappedDuration = constrain(mappedDuration, 10, 100);
+  motor_duration = mappedDuration;
+  Serial.print("Analog A0 value: ");
+  Serial.println(analogVal);
+  Serial.print("Mapped motor_duration: ");
+  Serial.println(motor_duration);
+
+  // Persist the mapped duration to EEPROM
+  EEPROM.write(addr1, motor_duration);
+  if (EEPROM.commit()) {
+    Serial.println("EEPROM successfully committed (from analog)");
+  } else {
+    Serial.println("ERROR! EEPROM commit failed (from analog)");
+  }
+
   display.setBrightness(0x0f);
   display.setSegments(blank);
   
