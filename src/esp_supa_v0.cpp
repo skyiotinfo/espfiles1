@@ -12,6 +12,7 @@ void compareAndSyncTime();
 void updateTable(String token, int st, int ds);
 void updateackTable(String token, int ack);
 int login_email(String email_a, String password_a);
+bool isOnline();
 
 const int device_id = 110001;
 
@@ -25,31 +26,35 @@ RTC_DS1307 rtc;
 
 #define EEPROM_SIZE 128
 
-#define EEPROM_START_UNIX_ADDR 0
-#define EEPROM_STOP_UNIX_ADDR 4
+#define DEVICE_ID 0
+#define EEPROM_START_UNIX_ADDR 10
+#define EEPROM_STOP_UNIX_ADDR 25
+#define EEPROM_LOCAL_STATE 40
+#define EEPROM_APP_MANUAL_STATUS 42
+#define EEPROM_UPDATED_BY 44
 
 #define MOTOR_PIN D8
 #define CLK_PIN D3
 #define DIO_PIN D4
-#define OT_SENSOR_PIN D1    // same as reference
+#define OT_SENSOR_PIN D7    // same as reference
 #define OT_ACTIVE_LEVEL LOW // ot_sensorstatus == 0 in ref
 
 int ot_sensorcount = 0;
-const int OT_TRIP_COUNT = 3;
+const int OT_TRIP_COUNT = 5;
 
-const int auto_status = D7;
 const int input1 = D9;
 int temp_count1 = 0;
 
 TM1637Display display(CLK_PIN, DIO_PIN);
 
-bool motor_status_manual = 0;
+int motor_status_manual = 0;
 
 unsigned long mili_now;
 unsigned long lastExecutionTime = 0;
-const unsigned long EXECUTION_INTERVAL = 10000; // Second in milliseconds
+long EXECUTION_INTERVAL = 10000; // Second in milliseconds
 uint32_t lastSavedStartUnix = 0;
 uint32_t lastSavedStopUnix = 0;
+int count = 0;
 
 struct Schedule
 {
@@ -61,21 +66,23 @@ uint8_t scheduleCount = 3;
 
 struct sch
 {
-  uint32_t startUnix; // when to turn ON
-  uint32_t stopUnix;  // when to turn OFF
+  int device_id;
+  uint32_t startUnix; 
+  uint32_t stopUnix;  
   uint8_t startTime;
   uint8_t stopTime;
-  bool active; // runtime state
+  int duration;
+  int active; 
   int state;
   int ack;
   int sch1_en;
+  int updated_by;
+  int local_state;
 };
 
 sch sch1;
 sch updated_sch1;
-sch sch2;
 int login_status = 0;
-
 int login_timeout = 0;
 String phone_or_email;
 String password;
@@ -91,19 +98,19 @@ String USER_TOKEN;
 WiFiClientSecure client;
 HTTPClient https;
 time_t internetTime;
+int appManualStop = 0;
 
-// char WIFI_SSID[20] = "sm42";
-// char WIFI_PASS[20] = "chai1111";
+char WIFI_SSID[20] = "sm42";
+char WIFI_PASS[20] = "chai1111";
 const char *supabase_device_url = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.211";
-char WIFI_SSID[20] = "Airtel_9764005401";
-char WIFI_PASS[20] = "air46403";
+//char WIFI_SSID[20] = "Airtel_9764005401";
+//char WIFI_PASS[20] = "air46403";
 char SUPABASE_URL[100] = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 char AUTH_URL[100] = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/auth/v1/token?grant_type=password";
 char SUPABASE_KEY[300] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
 char USER_EMAIL[30] = "9999900002@gmail.com";
 char USER_PASS[10] = "1234";
 
-bool scheduleCancelledByApp = false;
 const long DRIFT_THRESHOLD = 30; // rtc drift (difference) threshold in seconds
 
 unsigned long lastSync = 0;
@@ -113,24 +120,28 @@ const unsigned long SYNC_INTERVAL = 1 * 60 * 60 * 1000UL; // 6 hours
 void loadSchedules()
 {
   sch1 = {
+      110001, // device_id
       1767225600, // start time
       1767225600, // stop time
-      0,
-      0,
-      false,
-      0 // anupam
+      0, // startTime
+      0, // stopTime
+      10, // duration in minutes
+      0, // schedule active
+      0, // state on/off
+      0, // ack
+      0, // sch1_en
+      0, // updated_by
+      0 // local_state
   };
 }
 
 // Function to process OT sensor and handle motor state
 void processOTSensor()
 {
-
   int ot_sensorstatus = digitalRead(OT_SENSOR_PIN);
 
   if (digitalRead(MOTOR_PIN) == HIGH)
   {
-
     if (ot_sensorstatus == OT_ACTIVE_LEVEL)
     {
       ot_sensorcount++;
@@ -140,16 +151,15 @@ void processOTSensor()
 
       if (ot_sensorcount >= OT_TRIP_COUNT)
       {
-
         Serial.println("OT Sensor → MOTOR OFF");
-
         digitalWrite(MOTOR_PIN, LOW);
-        sch1.active = false;
-        scheduleCancelledByApp = true;
-
-        updateTable(USER_TOKEN, 0, 0);
-        updateackTable(USER_TOKEN, 0);
-
+        sch1.active = 0;
+        sch1.local_state = 1;
+        if(isOnline()){
+          updateTable(USER_TOKEN, 0, 0);
+          updateackTable(USER_TOKEN, 0);
+          sch1.local_state=0;
+        }
         ot_sensorcount = 0;
       }
     }
@@ -173,11 +183,11 @@ void saveScheduleToEEPROM()
 
     EEPROM.put(EEPROM_START_UNIX_ADDR, sch1.startUnix);
     EEPROM.put(EEPROM_STOP_UNIX_ADDR, sch1.stopUnix);
+    EEPROM.put(EEPROM_APP_MANUAL_STATUS, appManualStop);
     EEPROM.commit();
 
     lastSavedStartUnix = sch1.startUnix;
     lastSavedStopUnix = sch1.stopUnix;
-    updateackTable(USER_TOKEN, 1);
 
     Serial.println("Schedule changed → saved to EEPROM");
   }
@@ -192,15 +202,18 @@ void loadScheduleFromEEPROM()
 {
   EEPROM.get(EEPROM_START_UNIX_ADDR, sch1.startUnix);
   EEPROM.get(EEPROM_STOP_UNIX_ADDR, sch1.stopUnix);
+  EEPROM.get(EEPROM_LOCAL_STATE, sch1.updated_by);
+  EEPROM.get(EEPROM_APP_MANUAL_STATUS, appManualStop);
 
   if (sch1.startUnix < 1000000000 || sch1.stopUnix < sch1.startUnix)
   {
     Serial.println("Invalid EEPROM data, using defaults");
     loadSchedules();
-    scheduleCancelledByApp = false;
+    appManualStop = 0;
   }
 
-  sch1.active = false;
+  sch1.active = 0;
+  sch1.state = 0;
 
   // Track last saved values
   lastSavedStartUnix = sch1.startUnix;
@@ -227,36 +240,64 @@ int lastAppState = -1;
 // Function to check and execute schedule
 void checkSch(uint32_t nowUnix)
 {
-
   // START schedule
-  if (!sch1.active &&
-      !scheduleCancelledByApp &&
+  if (sch1.active == 0 &&
       nowUnix >= sch1.startUnix &&
-      nowUnix < sch1.stopUnix && sch1.ack == 1 && sch1.sch1_en == 1)
+      nowUnix < sch1.stopUnix &&
+      sch1.sch1_en == 1 &&
+      appManualStop == 0)  
   {
-
-    sch1.active = true;
+    sch1.active = 1;
     digitalWrite(MOTOR_PIN, HIGH);
     Serial.println("SCHEDULE START");
-    updateTable(USER_TOKEN, 1, 1);
-    updateackTable(USER_TOKEN, 1);
+    sch1.local_state = 1;
+    sch1.state = 1;
+    if(isOnline()) {
+      updateTable(USER_TOKEN, 1, 1);
+      updateackTable(USER_TOKEN, 0);
+      sch1.local_state = 0;
+    }
+
   }
 
   // STOP schedule
-  if (sch1.active && nowUnix >= sch1.stopUnix)
+  if (sch1.active == 1 && nowUnix >= sch1.stopUnix)
   {
-    sch1.active = false;
+    sch1.active = 0;
     digitalWrite(MOTOR_PIN, LOW);
     sch1.state = 0;
+    sch1.local_state = 1;
     Serial.println("SCHEDULE STOP");
-    updateTable(USER_TOKEN, 0, 0);
+    if(isOnline()){
+      updateTable(USER_TOKEN, 0, 0);
+      appManualStop = 0;
+      sch1.local_state=0;
+    }
+  
   }
 }
 
 // Function to check if the device is online
 bool isOnline()
 {
-  return WiFi.status() == WL_CONNECTED;
+  if(WiFi.status() != WL_CONNECTED) {
+    return false;
+  } 
+
+  if(WiFi.status() == WL_CONNECTED) {
+    https.begin(client, "https://api.skyiottech.com/time");
+    https.setTimeout(5000);
+
+    int code = https.GET();
+    if (code != 200)
+    {
+      Serial.println("Failed to connect to the internet");
+      https.end();
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 // Function to update the database table
@@ -334,66 +375,65 @@ void getTableData(String token, String field)
   {
     StaticJsonDocument<512> doc;
     deserializeJson(doc, https.getString());
+    heartbeat(token, 10);
 
     uint32_t duration = doc[0]["sch1_duration"];
     updated_sch1.state = doc[0]["state"];
     sch1.ack = doc[0]["ack"];
     sch1.sch1_en = doc[0]["sch1_en"];
+    int sync_duration = doc[0]["sync_duration"];
+    EXECUTION_INTERVAL = sync_duration * 1000UL;
     bool appOffPressed = (lastAppState == 1 && updated_sch1.state == 0);
     lastAppState = updated_sch1.state;
+    Serial.print("App State: ");
+    Serial.println(updated_sch1.state);
 
-    if (!sch1.active)
+    if (sch1.local_state == 1){
+       Serial.print("Local state change → skipping app command");
+       Serial.println(sch1.local_state);
+        updateTable(USER_TOKEN, sch1.state, sch1.state);
+        sch1.local_state = 0;
+        return;
+    }
+
+    if (updated_sch1.state == 1 && digitalRead(MOTOR_PIN) == LOW && sch1.ack==1)
     {
-
-      if (updated_sch1.state == 1 && digitalRead(MOTOR_PIN) == LOW)
-      {
         digitalWrite(MOTOR_PIN, HIGH);
+        sch1.state = 1;
+        count = 0;
         updateTable(USER_TOKEN, 1, 1);
+        updateackTable(USER_TOKEN, 0);
         Serial.println("Motor ON from App");
-      }
-
-      if (updated_sch1.state == 0 && digitalRead(MOTOR_PIN) == HIGH)
-      {
+        appManualStop = 0;
+        EEPROM.put(EEPROM_APP_MANUAL_STATUS, appManualStop);
+        EEPROM.commit();
+    }
+    
+  
+    if (updated_sch1.state == 0 && digitalRead(MOTOR_PIN) == HIGH && sch1.ack==1)
+    {
         digitalWrite(MOTOR_PIN, LOW);
         updateTable(USER_TOKEN, 0, 0);
+        updateackTable(USER_TOKEN, 0);
         Serial.println("Motor OFF from App");
-      }
+        sch1.active = 0;
+        sch1.state = 0;
     }
-    // Parse schedule times from server
 
     String schTime = doc[0]["sch1_start"];
     u_int16_t s1 = schTime.substring(0, 2).toInt();
     u_int16_t s2 = schTime.substring(3, 5).toInt();
     updated_sch1.startUnix = hourMinuteToUnixUTC(s1, s2);
     updated_sch1.stopUnix = updated_sch1.startUnix + (duration * 60);
-    // If a new schedule window is received (future schedule), allow it
-    if (scheduleCancelledByApp &&
-        updated_sch1.startUnix > rtc.now().unixtime())
+
+    if (sch1.startUnix != updated_sch1.startUnix || sch1.stopUnix != updated_sch1.stopUnix)
     {
-
-      scheduleCancelledByApp = false;
-      Serial.println("New schedule detected – cancellation cleared");
-    }
-
-    if (sch1.active && appOffPressed)
-    {
-      sch1.active = false;
-      scheduleCancelledByApp = true;
-      digitalWrite(MOTOR_PIN, LOW);
-      updateackTable(USER_TOKEN, 0);
-      Serial.println("Schedule cancelled by App OFF");
-    }
-
-    if (!sch1.active &&
-        (sch1.startUnix != updated_sch1.startUnix ||
-         sch1.stopUnix != updated_sch1.stopUnix))
-    {
-
       sch1.startUnix = updated_sch1.startUnix;
       sch1.stopUnix = updated_sch1.stopUnix;
+      sch1.active = 0;
       saveScheduleToEEPROM();
     }
-
+    
     Serial.println();
   }
   https.end();
@@ -480,7 +520,7 @@ void process_LocalEvents()
 
   if (now.day() != lastDay)
   {
-    scheduleCancelledByApp = false;
+    appManualStop = 0;  // Reset app manual stop on new day
     lastDay = now.day();
     Serial.println("New day – app cancellation reset");
   }
@@ -488,43 +528,65 @@ void process_LocalEvents()
   // ===== MANUAL BUTTON OVERRIDE =====
   if (digitalRead(input1) == LOW)
   {
-    delay(50); // debounce
-
-    if (digitalRead(input1) == LOW)
-    {
-      Serial.println("Manual Button Pressed");
-
       // If schedule is running and motor is ON → cancel schedule
-      if (sch1.active && digitalRead(MOTOR_PIN) == HIGH)
+      Serial.println("Manual Button Pressed");
+      if (sch1.active == 1 && digitalRead(MOTOR_PIN) == HIGH)
       {
-        sch1.active = false;
-        scheduleCancelledByApp = true;
-        Serial.println("Schedule cancelled by Manual Button");
-        updateackTable(USER_TOKEN, 0);
+        digitalWrite(MOTOR_PIN, LOW); 
+        sch1.local_state = 1;
+        sch1.state = 0;
+        if(isOnline()) {
+          updateTable(USER_TOKEN, 0, 0);
+          sch1.local_state = 0;
+        }
       }
 
       // Toggle motor
-      if (digitalRead(MOTOR_PIN) == HIGH)
+      if (sch1.active == 0 && digitalRead(MOTOR_PIN) == HIGH)
       {
         digitalWrite(MOTOR_PIN, LOW);
-        motor_status_manual = 0;
-        updateTable(USER_TOKEN, 0, 0);
+        sch1.local_state = 1;
+        sch1.state = 0;
         Serial.println("Motor OFF by Button");
+        if(isOnline()) {
+          updateTable(USER_TOKEN, 0, 0);
+          sch1.local_state = 0;
+        }
+        delay(200);
       }
-      else
+      else if (sch1.active == 0 && digitalRead(MOTOR_PIN) == LOW )
       {
         digitalWrite(MOTOR_PIN, HIGH);
-        motor_status_manual = 1;
-        updateTable(USER_TOKEN, 1, 1);
+        count = 0;
+        sch1.local_state = 1;
+        sch1.state = 1;
         Serial.println("Motor ON by Button");
+        if(isOnline()) {
+          updateTable(USER_TOKEN, 1, 1);
+          sch1.local_state = 0;
+        }
+        delay(200);
       }
-
-      delay(500); // prevent multiple triggers
-    }
   }
 
   if (mili_now - lastExecutionTime >= EXECUTION_INTERVAL)
   {
+    
+    if(digitalRead(MOTOR_PIN) == HIGH){
+      count += EXECUTION_INTERVAL / 1000; 
+      Serial.println("Count: " + String(count));
+      if(count >= (sch1.duration * 60)) { 
+        sch1.active = 0;
+        sch1.state = 0;
+        digitalWrite(MOTOR_PIN, LOW);
+        if(isOnline()) {
+              updateTable(USER_TOKEN, 0, 0);
+              updateackTable(USER_TOKEN, 0);
+        }
+        count = 0;
+      }
+    }
+
     Serial.println("Checking Local Events...");
     lastExecutionTime = mili_now;
     checkSch(rtc.now().unixtime());
@@ -542,7 +604,6 @@ void process_LocalEvents()
     Serial.println(dt.minute());
     Serial.print("Auth Timeout in seconds: ");
     Serial.println(authTimeout);
-    heartbeat(USER_TOKEN, 10); // anupam
     if (authTimeout > 20)
     {
       authTimeout -= 10;
@@ -550,31 +611,31 @@ void process_LocalEvents()
     if (WiFi.status() != WL_CONNECTED)
     {
       Serial.println("WiFi Disconnected - Reconnecting...");
+      Serial.println("Reconnected to the internet");
       WiFi.begin(WIFI_SSID, WIFI_PASS);
       authTimeout = 0;
       login_status = 0;
     }
     if (WiFi.status() == WL_CONNECTED)
     {
-      // anupam
       if (lastSync == 0)
       {
         compareAndSyncTime();
       }
       if (login_status == 0)
       {
-
-        int n1 = login_email(USER_EMAIL, USER_PASS);
-        Serial.print("Login Process HTTP Code: ");
-        Serial.println(n1);
-        login_status = 1;
+        if(isOnline()) {
+          int n1 = login_email(USER_EMAIL, USER_PASS);
+          Serial.print("Login Process HTTP Code: ");
+          Serial.println(n1);
+          login_status = 1;
+        } 
       }
       if (authTimeout <= 100)
       {
         Serial.println("Auth Token Timeout...");
         login_status = 0;
       }
-
       getTableData(USER_TOKEN, "");
     }
   }
@@ -657,7 +718,6 @@ void setup()
   pinMode(MOTOR_PIN, OUTPUT);
   digitalWrite(MOTOR_PIN, LOW);
   pinMode(input1, INPUT_PULLUP);
-  pinMode(auto_status, OUTPUT);
   pinMode(OT_SENSOR_PIN, INPUT_PULLUP);
 
   display.setBrightness(0x0f);
@@ -672,7 +732,9 @@ void setup()
   else
   {
     Serial.println("RTC Not Found");
+    sch1.sch1_en = 0; 
   }
+  loadSchedules();
   loadScheduleFromEEPROM();
 }
 
