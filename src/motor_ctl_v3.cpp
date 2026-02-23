@@ -57,7 +57,7 @@ void setup() {
   pinMode(ot_sensor, INPUT_PULLUP);
   pinMode(ut_sensor, INPUT_PULLUP);
   pinMode(auto_status, INPUT_PULLUP);
-  digitalWrite(buzzer, LOW);
+  digitalWrite(buzzer, HIGH);
   
   delay(1000);
   memval1=EEPROM.read(addr1);

@@ -1,30 +1,20 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>
-#include <EEPROM.h>
+#include <espnow.h>
 #include <TM1637Display.h>
+#include <EEPROM.h>
 
-// Pin definitions
 #define CLK D3
 #define DIO D4
 #define buzzer D2
-#define input1 D9
+#define input1 D9   // kept as-is (hardware responsibility)
 
-// WiFi credentials
-const char* ssid = "Airel_8600577773";
-const char* password = "air10162";
+const char* networkid = "1033";
+const char* deviceid = "01";
 
-// Firebase Realtime Database URL (must be public or have rules allowing read access)
-const char* firebaseUrl = "https://esp-02.asia-southeast1.firebasedatabase.app/users/uid/10103.json";
+uint8_t broadcastAddress[] = {0xFC, 0xF5, 0xC4, 0xBE, 0x79, 0xB3};
 
-// Expected identification
-const char* expectedNetworkID = "2012";
-const char* expectedDeviceID = "01";
-
-// Display
 TM1637Display display(CLK, DIO);
 
-// Segment patterns for display
 const uint8_t seg_empty[] = {
   0x00,
   SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,
@@ -39,103 +29,112 @@ const uint8_t seg_full[] = {
   0x00
 };
 
-// System state variables
-int motor_status = 0;
+typedef struct struct_message {
+  char message[64];  
+} struct_message;
+
+struct_message incomingmsg;
+struct_message outgoingmsg;
+
+/* ===== CHANGED ===== */
+String motor_status = "00";   // "00" OFF, "11" ON
+
 int motor_duration = 30;
 int motor_time = 0;
-int sensor_status = 2;
-
+int sensor_status = 2; 
 int tcount1 = 0, tcount2 = 0, tcount3 = 0;
 int temp_count1 = 0;
-unsigned long lastCheck = 0;
 
-void handleStates(int vstate1, int vstate2) {
-  String status = String(vstate1) + String(vstate2);
+/* ===== ADDED (SEND CONTROL) ===== */
+bool sendingActive = false;
+int sendCount = 0;
+const int maxSendCount = 10;
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 1000;
+/* ===== ADDED (1 MIN PERIODIC RESEND) ===== */
+unsigned long lastResendTime = 0;
+const unsigned long resendInterval = 60000; // 1 minute
 
-  if (status == "00") {  // Tank full
-    display.clear();
-    display.setSegments(seg_full);
-    tcount1++;
-    if (tcount1 >= 3) {
-      Serial.println("Tank Full Detected");
-      digitalWrite(buzzer, LOW);
-      motor_status = 0;
-      motor_time = motor_duration * 60;
-      sensor_status = 0;
-      tcount1 = 0;
+
+/* ===== ADDED SEND FUNCTION ===== */
+void send_motor_status() {
+  if (!sendingActive) return;
+
+  if (millis() - lastSendTime >= sendInterval) {
+    snprintf(outgoingmsg.message, sizeof(outgoingmsg.message), "%s%s%s", networkid, deviceid, motor_status);
+    esp_now_send(broadcastAddress, (uint8_t *)&outgoingmsg, sizeof(outgoingmsg));
+
+    Serial.print("ESP-NOW Sent: ");
+    Serial.println(outgoingmsg.message);
+
+    lastSendTime = millis();
+    sendCount++;
+
+    if (sendCount >= maxSendCount) {
+      sendingActive = false;
+      Serial.println("Send cycle complete");
     }
-  } else {
-    tcount1 = 0;
-  }
-
-  if (status == "11") {  // Tank empty
-    display.clear();
-    display.setSegments(seg_empty);
-    tcount2++;
-    if (tcount2 >= 3) {
-      Serial.println("Tank Empty Detected");
-      digitalWrite(buzzer, HIGH);
-      motor_status = 1;
-      sensor_status = 1;
-      tcount2 = 0;
-    }
-  } else {
-    tcount2 = 0;
-  }
-
-  if (status == "22") {  // Water level normal
-    tcount3++;
-    if (tcount3 >= 3) {
-      Serial.println("Water Level Normal");
-      sensor_status = 2;
-      tcount3 = 0;
-    }
-  } else {
-    tcount3 = 0;
   }
 }
 
-void checkFirebaseStatus() {
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFiClient client;
-    HTTPClient http;
+void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
+  memcpy(&incomingmsg, incomingData, sizeof(incomingmsg));
+  Serial.print("Received message: ");
+  Serial.println(incomingmsg.message);
 
-    http.begin(client, firebaseUrl);  // UPDATED: new signature
-    int httpCode = http.GET();
+  String data = incomingmsg.message;
+  if (data.length() >= 8) {
+    String networkid = data.substring(0, 6);
+    String devicestatus = data.substring(6, 8);
 
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      Serial.println("Firebase response: " + payload);
+    if (networkid == "103302") {
 
-      // Parse JSON manually (basic string manipulation)
-      int nidStart = payload.indexOf("\"networkid\":\"") + 13;
-      int nidEnd = payload.indexOf("\"", nidStart);
-      String netid = payload.substring(nidStart, nidEnd);
+      if (devicestatus == "00") {
+        display.clear();
+        display.setSegments(seg_full);
+        tcount1++;
+        if (tcount1 >= 3 && motor_status != "00") {
+          digitalWrite(buzzer, LOW);
+          motor_status = "00";
+          motor_time = motor_duration * 60;
+          sensor_status = 0;
 
-      int didStart = payload.indexOf("\"deviceid\":\"") + 13;
-      int didEnd = payload.indexOf("\"", didStart);
-      String devid = payload.substring(didStart, didEnd);
+          sendingActive = true;
+          sendCount = 0;
+          lastResendTime = millis();
 
-      int v1Index = payload.indexOf("\"vstate1\":");
-      int v2Index = payload.indexOf("\"vstate2\":");
 
-      int vstate1 = payload.substring(v1Index + 10, payload.indexOf(",", v1Index)).toInt();
-      int vstate2 = payload.substring(v2Index + 10, payload.indexOf("}", v2Index)).toInt();
+          tcount1 = 0;
+        }
+      } else tcount1 = 0;
 
-      // Check if data matches this receiver
-      if (netid == expectedNetworkID && devid == expectedDeviceID) {
-        handleStates(vstate1, vstate2);
-      } else {
-        Serial.println("Ignored: Network ID or Device ID mismatch");
-      }
+      if (devicestatus == "11") {
+        display.clear();
+        display.setSegments(seg_empty);
+        tcount2++;
+        if (tcount2 >= 3 && motor_status != "11") {
+          digitalWrite(buzzer, HIGH);
+          motor_status = "11";
+          motor_time = motor_duration * 60;
+          sensor_status = 1;
 
-    } else {
-      Serial.print("HTTP Error: ");
-      Serial.println(httpCode);
+          sendingActive = true;
+          sendCount = 0;
+          lastResendTime = millis();
+
+
+          tcount2 = 0;
+        }
+      } else tcount2 = 0;
+
+      if (devicestatus == "22") {
+        tcount3++;
+        if (tcount3 >= 3) {
+          sensor_status = 2;
+          tcount3 = 0;
+        }
+      } else tcount3 = 0;
     }
-    http.end();
-  } else {
-    Serial.println("WiFi not connected");
   }
 }
 
@@ -151,15 +150,16 @@ void setup() {
   display.clear();
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  WiFi.disconnect();
+
+  if (esp_now_init() != 0) {
+    Serial.println("ESP-NOW init failed");
+    return;
   }
-  Serial.println("\nWiFi connected");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+  esp_now_register_recv_cb(OnDataRecv);
+  esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
 
   motor_duration = EEPROM.read(0);
   if (motor_duration < 1 || motor_duration > 180) {
@@ -167,49 +167,64 @@ void setup() {
   }
   motor_time = motor_duration * 60;
 
-  Serial.println("Receiver ready.");
+  Serial.println("ESP-NOW Receiver Ready");
 }
 
 void loop() {
-  // Manual start/stop using button
-  if (digitalRead(input1) == LOW) {
-    Serial.println("Manual Button Pressed");
-    if (digitalWrite(buzzer, LOW), digitalRead(buzzer) == LOW) {
+
+  if (digitalRead(input1) == 0) {
+    if (motor_status == "00") {
       digitalWrite(buzzer, HIGH);
-      motor_status = 1;
+      motor_status = "11";
       motor_time = motor_duration * 60;
     } else {
       digitalWrite(buzzer, LOW);
-      motor_status = 0;
-      Serial.println("Motor stopped manually");
+      motor_status = "00";
     }
+    sendingActive = true;
+    sendCount = 0;
+    lastResendTime = millis();
+
     delay(1000);
   }
 
-  // Handle motor timing
-  if (motor_status == 1) {
+  if (motor_status == "11") {
     motor_time--;
     display.showNumberDec((motor_time / 60) + 1, false);
+
     if (motor_time <= 0 || sensor_status == 0) {
       temp_count1++;
       if (temp_count1 >= 5) {
         digitalWrite(buzzer, LOW);
-        motor_status = 0;
+        motor_status = "00";
         motor_time = motor_duration * 60;
-        temp_count1 = 0;
         display.clear();
+        temp_count1 = 0;
+
+        sendingActive = true;
+        sendCount = 0;
+        lastResendTime = millis();
+
       }
-    } else {
-      temp_count1 = 0;
-    }
+    } else temp_count1 = 0;
+
     delay(1000);
   } else {
     delay(500);
   }
 
-  // Check Firebase every 10 seconds
-  if (millis() - lastCheck > 10000) {
-    lastCheck = millis();
-    checkFirebaseStatus();
+  /* ===== SEND MOTOR STATUS (10 TIMES) ===== */
+  send_motor_status();
+
+  /* ===== PERIODIC 1 MIN RESEND ===== */
+if (!sendingActive) {
+  if (millis() - lastResendTime >= resendInterval) {
+    Serial.println("1 minute resend triggered");
+
+    sendingActive = true;
+    sendCount = 0;
+    lastResendTime = millis();
   }
+}
+
 }

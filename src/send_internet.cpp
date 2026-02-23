@@ -1,27 +1,40 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
+#include <espnow.h>
 
-const char* ssid = "Airel_8600577773";
-const char* password = "air10162";
+uint8_t receiverMAC[] = {0x2C, 0xF4, 0x32, 0x63, 0xB7, 0x88};  // Receiver ESP
+uint8_t iotMAC[]      = {0xFC, 0xF5, 0xC4, 0xBE, 0x79, 0xB3};  // IoT ESP
+
+
+const long interval = 1000;
+unsigned long previousMillis = 0;
 
 #define hsen D1
 #define lsen D2
 
-const char* networkid = "2012";
-const char* deviceid = "01";
+const char* networkid = "1033";
+const char* deviceid = "02";
 
-const char* serverName = "https://esp-02.asia-southeast1.firebasedatabase.app/users/uid/10103.json";
+typedef struct struct_message {
+  char message[64]; 
+} struct_message;
 
-const long interval = 10000;
-unsigned long previousMillis = 0;
+struct_message outgoingmsg;
 
-int vstate1 = 2;
+int vstate1 = 2;  
 int vstate2 = 2;
 
 int temp_count1 = 0;
 int temp_count2 = 0;
 int temp_count3 = 0;
+
+void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+  Serial.print("Last Packet Send Status: ");
+  if (sendStatus == 0) {
+    Serial.println("Delivery success");
+  } else {
+    Serial.println("Delivery fail");
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -30,15 +43,18 @@ void setup() {
   pinMode(lsen, INPUT_PULLUP);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  WiFi.disconnect();
+
+  if (esp_now_init() != 0) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
   }
-  Serial.println("\nWiFi connected");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+  esp_now_register_send_cb(OnDataSent);
+  esp_now_add_peer(receiverMAC, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+  esp_now_add_peer(iotMAC, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+
 }
 
 void loop() {
@@ -46,13 +62,14 @@ void loop() {
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
 
+    
     if (digitalRead(hsen) == LOW) {
       temp_count1++;
       if (temp_count1 >= 3) {
         vstate1 = 0;
         vstate2 = 0;
         temp_count1 = 0;
-        Serial.println("Tank Full");
+        Serial.println("High Level Triggered");
       }
     } else {
       temp_count1 = 0;
@@ -64,7 +81,7 @@ void loop() {
         vstate1 = 1;
         vstate2 = 1;
         temp_count2 = 0;
-        Serial.println("Tank Empty");
+        Serial.println("Low Level Triggered");
       }
     } else {
       temp_count2 = 0;
@@ -82,36 +99,14 @@ void loop() {
       temp_count3 = 0;
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-      WiFiClientSecure client;
-      client.setInsecure(); 
+    
+    snprintf(outgoingmsg.message, sizeof(outgoingmsg.message), "%s%s%d%d", networkid, deviceid, vstate1, vstate2);
 
-      HTTPClient https;
-      https.begin(client, serverName);
-      https.addHeader("Content-Type", "application/json");
+    Serial.print("Sending: ");
+    Serial.println(outgoingmsg.message);
 
-      String jsonData = "{";
-      jsonData += "\"networkid\":\"" + String(networkid) + "\",";
-      jsonData += "\"deviceid\":\"" + String(deviceid) + "\",";
-      jsonData += "\"vstate1\":" + String(vstate1) + ",";
-      jsonData += "\"vstate2\":" + String(vstate2);
-      jsonData += "}";
+    esp_now_send(receiverMAC, (uint8_t *)&outgoingmsg, sizeof(outgoingmsg));
+    esp_now_send(iotMAC, (uint8_t *)&outgoingmsg, sizeof(outgoingmsg));
 
-      Serial.println("Sending data: " + jsonData);
-
-      int httpResponseCode = https.PUT(jsonData);  
-      if (httpResponseCode > 0) {
-        Serial.print("Firebase response: ");
-        Serial.println(httpResponseCode);
-        Serial.println(https.getString());
-      } else {
-        Serial.print("HTTPS error: ");
-        Serial.println(httpResponseCode);
-      }
-
-      https.end();
-    } else {
-      Serial.println("WiFi not connected");
-    }
   }
 }

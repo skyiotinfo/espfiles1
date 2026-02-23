@@ -4,11 +4,11 @@
 #include <TimeLib.h>
 
 uint8_t set_Sec   = 0;     /* Set the Seconds */
-uint8_t set_Minute=34;    /* Set the Minutes */
-uint8_t set_Hour  = 11;     /* Set the Hours */
-uint8_t set_Day   = 16;     /* Set the Day */
-uint8_t set_Month = 10;    /* Set the Month */
-uint16_t set_Year = 2025;  /* Set the Year */
+uint8_t set_Minute=4;    /* Set the Minutes */
+uint8_t set_Hour  = 18;     /* Set the Hours */
+uint8_t set_Day   = 10;     /* Set the Day */
+uint8_t set_Month = 2;    /* Set the Month */
+uint16_t set_Year = 2026;  /* Set the Year */
 
 void setup() {
   Serial.begin(115200);

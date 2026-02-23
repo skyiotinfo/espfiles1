@@ -140,13 +140,13 @@ void loop() {
     Serial.print("Received packet: ");
     Serial.println(LoRaData);
 
-    String deviceid = LoRaData.substring(0, 4);
+    String deviceid = LoRaData.substring(0, 6);
     String devicestatus = LoRaData.substring(6, 8);
 
     Serial.println(deviceid);
     Serial.println(devicestatus);
 
-    if (deviceid.equals("2010") && devicestatus.equals("00")) {
+    if (deviceid.equals("210001") && devicestatus.equals("11")) {
       display.clear();
       display.setSegments(seg_full);
       delay(500);
@@ -163,7 +163,7 @@ void loop() {
       tcount1 = 0;
     }
 
-    if (deviceid.equals("2010") && devicestatus.equals("11")) {
+    if (deviceid.equals("210001") && devicestatus.equals("00")) {
       tcount2++;
       display.clear();
       display.setSegments(seg_empty);

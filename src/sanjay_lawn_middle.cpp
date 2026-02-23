@@ -9,10 +9,10 @@
 #define ss   D8
 #define rst  D0
 #define dio0 D4  
-#define WIFI_SSID "Ofiice"
-#define WIFI_PASS "kgroups@9966"
-// #define WIFI_SSID "Anupam"
-// #define WIFI_PASS "12345678"
+// #define WIFI_SSID "Ofiice"
+// #define WIFI_PASS "kgroups@9966"
+#define WIFI_SSID "Anupam"
+#define WIFI_PASS "12345678"
 int led=D8;
 
 #define SUPABASE_URL "https://fkgfdgwpqqfxhnyuwtwe.supabase.co"
@@ -154,7 +154,7 @@ void loop() {
   }
 
 
-  if (deviceid == "103101") {   
+  if (deviceid == "103301") {   
     if (mapped != lastPumpState) {
       Serial.println("Pump state CHANGED -> updating Supabase");
       sendToSupabase("pump_motor", "state", deviceid, mapped);
@@ -163,7 +163,7 @@ void loop() {
       Serial.println("Pump state unchanged -> skip update");
     }
   }
-  else if (deviceid == "103102") {  
+  else if (deviceid == "103302") {  
     if (mapped != lastTankState) {
       Serial.println("Tank state CHANGED -> updating Supabase");
       sendToSupabase("tank", "tank_status", deviceid, mapped);

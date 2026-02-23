@@ -10,7 +10,7 @@
 #define ss D8
 #define rst D0
 #define dio0 D4
-#define networkid "1031"
+#define networkid "1033"
 #define device "01"
 
 int addr1 = 0;
@@ -24,6 +24,7 @@ int lora_pac_count = 0;
 int tcount1 = 0;
 int tcount2 = 0;
 int tcount3 = 0;
+#define BLINK_LED D7
 
 String motor_status = "00";
 String last_sent_status = "";
@@ -31,7 +32,7 @@ String last_sent_status = "";
 int motor_time = 0;
 int empty_start = 0;
 int value_count = 0;
-int motor_duration = 30;
+int motor_duration = 3;
 int motor_stoptime = 0;
 int count = 0;
 int sound = 0;
@@ -45,7 +46,16 @@ int sendCount = 0;
 const int maxSendCount = 10;
 bool sendingActive = false;
 
+void tank_blinkall(int duration) {
+  int blinkCount = duration;  // 1 blink per 10 minutes
 
+  for (int i = 0; i < blinkCount; i++) {
+    digitalWrite(BLINK_LED, HIGH);
+    delay(300);
+    digitalWrite(BLINK_LED, LOW);
+    delay(300);
+  }
+}
 const uint8_t seg_empty[] = {
   0x00,
   SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,
@@ -76,6 +86,9 @@ void setup() {
   pinMode(input1, INPUT_PULLUP);
   pinMode(buzzer, OUTPUT);
   digitalWrite(buzzer, LOW);
+  pinMode(BLINK_LED, OUTPUT);
+  digitalWrite(BLINK_LED, LOW);
+
   motor_status = "00";
   sendingActive = true;
   sendCount = 0;
@@ -87,40 +100,37 @@ void setup() {
   display.setBrightness(0x0f);
   display.setSegments(blank);
 
-  int temp_count = 100;
-  if (digitalRead(input1) == 0) {
-    while (temp_count >= 1) {
-      if (digitalRead(input1) == 0) {
-        if (motor_duration <= 180) {
-          motor_duration += 5;
-          temp_count++;
-        } else {
-          motor_duration = 0;
-        }
-      }
-      temp_count--;
-      delay(200);
-      Serial.print("Temp Count:");
-      Serial.println(temp_count);
-      Serial.print("Motor Duration:");
-      Serial.println(motor_duration);
+int temp_count = 0;
+while (digitalRead(input1) == 0) {
+  temp_count++;
 
-      EEPROM.write(addr1, motor_duration);
-      if (EEPROM.commit()) {
-        Serial.println("EEPROM successfully committed");
-        display.showNumberDec(5, false, 1, 0);
-        display.showNumberDec(motor_duration, false);
-      } else {
-        Serial.println("ERROR! EEPROM commit failed");
-      }
+  if (temp_count >= 3) {   
+    if (motor_duration < 18) {
+      motor_duration += 1;
+    } else {
+      motor_duration = 3;
     }
-  }
 
-  if (motor_duration < 1 || motor_duration > 180) {
-    motor_duration = 30;
-  }
+    temp_count = 0;
 
-  motor_time = motor_duration * 60;
+    EEPROM.write(addr1, motor_duration);
+    EEPROM.commit();
+
+    display.showNumberDec(motor_duration, false);
+      tank_blinkall(motor_duration);
+    
+  }
+  delay(1000);
+}
+
+
+  if (motor_duration < 1 || motor_duration > 18) {
+    motor_duration = 3;
+  }
+  tank_blinkall(motor_duration);
+      
+
+  motor_time = (motor_duration * 60)*10;
   empty_start = 0;
 
   for (int i = 0; i < 8; i++) {
@@ -195,7 +205,7 @@ void loop() {
     // Serial.println(deviceid);
     // Serial.println(devicestatus);
 
-    if (deviceid.equals("1031") && devicestatus.equals("00")) {
+    if (deviceid.equals("1033") && devicestatus.equals("00")) {
       display.clear();
       display.setSegments(seg_full);
       // delay(500);
@@ -206,7 +216,7 @@ void loop() {
         sendingActive = true;
         sendCount = 0;
         display.showNumberDec(0, false);
-        motor_time = motor_duration * 60;
+        motor_time = (motor_duration * 60)*10;
         tcount1 = 0;
         sensor_status = 0;
       }
@@ -214,7 +224,7 @@ void loop() {
       tcount1 = 0;
     }
 
-    if (deviceid.equals("1031") && devicestatus.equals("11")) {
+    if (deviceid.equals("1033") && devicestatus.equals("11")) {
       tcount2++;
       display.clear();
       display.setSegments(seg_empty);
@@ -230,7 +240,7 @@ void loop() {
       tcount2 = 0;
     }
 
-    if (deviceid.equals("1031") && devicestatus.equals("22")) {
+    if (deviceid.equals("1033") && devicestatus.equals("22")) {
       tcount3++;
       if (tcount3 >= 2) {
         Serial.println("Tank No Data.........");
@@ -262,7 +272,7 @@ void loop() {
       motor_status = "11";
       sendingActive = true;
       sendCount = 0;
-      motor_time = motor_duration * 60;
+      motor_time = (motor_duration * 60)*10;
       value_count = 15;
     } else {
       digitalWrite(buzzer, LOW);
@@ -294,7 +304,7 @@ void loop() {
         sendCount = 0;
         temp_count1 = 0;
         display.showNumberDec(0, false);
-        motor_time = motor_duration * 60;
+        motor_time = (motor_duration * 60)*10;
       }
     } else {
       temp_count1 = 0;
@@ -311,7 +321,7 @@ void loop() {
     motor_status = "00";
     sendingActive = true;
     sendCount = 0;
-    motor_time = motor_duration * 60;
+    motor_time = (motor_duration * 60)*10;
   }
  send_data();
 delay(200);

@@ -8,7 +8,7 @@
 *  
 *  *********************************************************************************/
 #include <PZEM004Tv30.h>
-PZEM004Tv30 pzem1(14, 12); // GPIO14(D5) to Tx PZEM004; GPIO12(D6) to Rx PZEM004
+PZEM004Tv30 pzem1(12, 14); // GPIO14(D5) to Tx PZEM004; GPIO12(D6) to Rx PZEM004
 //PZEM004Tv30 pzem1(Serial2,16, 17); // GPIO14(D5) to Tx PZEM004; GPIO12(D6) to Rx PZEM004
 float VOLTAGE, CURRENT, POWER, energy1, Freq, pf1, va1, VAR1;
 float zeroIfNan(float v);

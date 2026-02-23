@@ -1,7 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <espnow.h>
 
-uint8_t broadcastAddress[] = {0xE8, 0xDB, 0x84, 0xCC, 0xF6, 0x65};
+uint8_t broadcastAddress[] = {0x2C, 0xF4, 0x32, 0x63, 0xB7, 0x88};
 
 const long interval = 1000;
 unsigned long previousMillis = 0;
