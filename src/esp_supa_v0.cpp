@@ -100,16 +100,19 @@ HTTPClient https;
 time_t internetTime;
 int appManualStop = 0;
 
-char WIFI_SSID[20] = "sm42";
-char WIFI_PASS[20] = "chai1111";
-const char *supabase_device_url = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.211";
+//char WIFI_SSID[20] = "sm42";
+//char WIFI_PASS[20] = "chai1111";
+const char *supabase_device_url = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/rest/v1/pump_motor?id=eq.353";
 //char WIFI_SSID[20] = "Airtel_9764005401";
 //char WIFI_PASS[20] = "air46403";
+char WIFI_SSID[20] = "Airel_8600577773";
+char WIFI_PASS[20] = "air10162";
+
 char SUPABASE_URL[100] = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co";
 char AUTH_URL[100] = "https://fkgfdgwpqqfxhnyuwtwe.supabase.co/auth/v1/token?grant_type=password";
 char SUPABASE_KEY[300] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2ZkZ3dwcXFmeGhueXV3dHdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAzMzQzNzQsImV4cCI6MjA3NTkxMDM3NH0.Dn805WO5wyPa25yD5fYYcCzB4TgDbnTCb4zBuCiczZU";
-char USER_EMAIL[30] = "9999900002@gmail.com";
-char USER_PASS[10] = "1234";
+char USER_EMAIL[30] = "9999900052@gmail.com";
+char USER_PASS[10] = "123456";
 
 const long DRIFT_THRESHOLD = 30; // rtc drift (difference) threshold in seconds
 
@@ -286,7 +289,7 @@ bool isOnline()
 
   if(WiFi.status() == WL_CONNECTED) {
     https.begin(client, "https://api.skyiottech.com/time");
-    https.setTimeout(5000);
+    https.setTimeout(4000);
 
     int code = https.GET();
     if (code != 200)
@@ -295,6 +298,7 @@ bool isOnline()
       https.end();
       return false;
     }
+    https.end();
     return true;
   }
   return false;
@@ -565,7 +569,7 @@ void process_LocalEvents()
           updateTable(USER_TOKEN, 1, 1);
           sch1.local_state = 0;
         }
-        delay(200);
+        delay(300);
       }
   }
 
@@ -700,14 +704,13 @@ int login_email(String email_a, String password_a)
   loginMethod = "email";
   phone_or_email = email_a;
   password = password_a;
-
   int httpCode = 0;
   while (httpCode <= 0)
   {
     httpCode = _login_process();
   }
-  return httpCode;
   https.end();
+  return httpCode;
 }
 
 // Arduino setup function
