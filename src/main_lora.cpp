@@ -25,7 +25,7 @@
 #define MOTOR1_PIN D2
 #define LORA_STATUS_LED LED_BUILTIN
 #define OT_SENSOR_PIN D1
-#define MOTOR1_BUTTON D9
+#define MOTOR1_BUTTON D3
 
 #define OT_ACTIVE_LEVEL LOW
 int ot_sensorcount = 0;
@@ -773,7 +773,7 @@ void process_LoraEvents()
 
 void setup()
 {
-    Serial1.begin(115200);
+    //Serial1.begin(115200);
     Serial.begin(SERIAL_BAUD);
     Serial.setTimeout(5);
     EEPROM.begin(EEPROM_SIZE);
