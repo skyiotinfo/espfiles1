@@ -20,79 +20,145 @@ TM1637Display display(CLK, DIO);
 
 uint8_t board4Mac[] = {0x3C, 0x61, 0x05, 0xDC, 0x6A, 0x29};
 
-uint8_t lastSentStatus = 255;
+void sendStatus();
+
+uint8_t lastAckedStatus = 255;
+uint8_t currentStatus = 0;
 uint8_t pendingStatus = 0;
 bool statusPending = false;
-unsigned long statusSendTime = 0;
+unsigned long lastSendAttempt = 0;
 const unsigned long RETRY_INTERVAL = 300;
 
-const int addrDuration = 0;
-unsigned long runTime_ms;
 unsigned long motorStartTime = 0;
+unsigned long runTime_ms = 0;
+int motorDuration_min = 1;
 bool runningFirstPair = true;
-int motorDuration_min = 10;
 bool systemBooting = true;
 
-void sendStatus() {
-  uint8_t status = 0;
-  if (digitalRead(M1_PIN) && digitalRead(B1_PIN)) status = 1;
-  else if (digitalRead(M2_PIN) && digitalRead(B2_PIN)) status = 2;
+enum MotorState { RUNNING, STOPPING, SWITCHING };
+MotorState state = RUNNING;
+unsigned long stateChangeTime = 0;
 
-  if (status == lastSentStatus && !statusPending) return;
+bool lastButtonState = HIGH;
+bool buttonConfirmed = false;
+unsigned long lastDebounceTime = 0;
+const unsigned long DEBOUNCE_DELAY = 50;
 
-  pendingStatus = status;
-  statusPending = true;
-  statusSendTime = 0;
-  Serial.print("📤 Queue status to Board4: ");
-  Serial.println(status);
-}
-
-void trySendPendingStatus() {
-  if (!statusPending) return;
-  unsigned long now = millis();
-  if (now - statusSendTime >= RETRY_INTERVAL) {
-    statusSendTime = now;
-    uint8_t data[2] = {2, pendingStatus};
-    int result = esp_now_send(board4Mac, data, sizeof(data));
-    Serial.print("📤 Sending status (");
-    Serial.print(pendingStatus);
-    Serial.print(") → ");
-    Serial.println(result == 0 ? "OK" : "ERROR");
-  }
+void setMotors(bool m1, bool b1, bool m2, bool b2) {
+  digitalWrite(M1_PIN, m1 ? HIGH : LOW);
+  digitalWrite(B1_PIN, b1 ? HIGH : LOW);
+  digitalWrite(M2_PIN, m2 ? HIGH : LOW);
+  digitalWrite(B2_PIN, b2 ? HIGH : LOW);
 }
 
 void startM1B1() {
   Serial.println("▶ Start M1+B1");
-  digitalWrite(M1_PIN, HIGH);
-  digitalWrite(B1_PIN, HIGH);
-  digitalWrite(M2_PIN, LOW);
-  digitalWrite(B2_PIN, LOW);
-  sendStatus();
+  setMotors(true, true, false, false);
+  currentStatus = 1;
+  sendStatus();          
 }
 
 void startM2B2() {
   Serial.println("▶ Start M2+B2");
-  digitalWrite(M2_PIN, HIGH);
-  digitalWrite(B2_PIN, HIGH);
-  digitalWrite(M1_PIN, LOW);
-  digitalWrite(B1_PIN, LOW);
+  setMotors(false, false, true, true);
+  currentStatus = 2;
   sendStatus();
 }
 
 void stopAll() {
   Serial.println("⏹ Stop all");
-  digitalWrite(M1_PIN, LOW);
-  digitalWrite(M2_PIN, LOW);
-  digitalWrite(B1_PIN, LOW);
-  digitalWrite(B2_PIN, LOW);
+  setMotors(false, false, false, false);
+  currentStatus = 0;
   sendStatus();
+}
+
+void sendStatus() {
+  if (currentStatus == lastAckedStatus && !statusPending) return;
+
+  pendingStatus = currentStatus;
+  statusPending = true;
+  lastSendAttempt = millis();
+  Serial.print("📤 Queued status: ");
+  Serial.println(pendingStatus);
+}
+
+void trySendPendingStatus() {
+  if (!statusPending) return;
+
+  if (millis() - lastSendAttempt >= RETRY_INTERVAL) {
+    lastSendAttempt = millis();
+    uint8_t data[2] = {2, pendingStatus};
+    int result = esp_now_send(board4Mac, data, sizeof(data));
+    if (result == 0) {
+      Serial.print("📤 Sent status ");
+      Serial.println(pendingStatus);
+    } else {
+      Serial.print("❌ Send failed, code ");
+      Serial.println(result);
+    }
+  }
 }
 
 void onReceive(uint8_t *mac, uint8_t *data, uint8_t len) {
   if (len == 1 && data[0] == 0xAA) {
-    Serial.println("✅ ACK from Board4");
-    lastSentStatus = pendingStatus;
-    statusPending = false;
+    Serial.println("✅ ACK received");
+    if (statusPending && pendingStatus == currentStatus) {
+      lastAckedStatus = pendingStatus;
+      statusPending = false;
+    } else {
+      Serial.println("⚠️ Ignoring stale ACK");
+    }
+  }
+}
+
+void handleButton() {
+  bool reading = digitalRead(BUTTON_PIN) == LOW;
+
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
+    if (reading != buttonConfirmed) {
+      buttonConfirmed = reading;
+      if (buttonConfirmed && !systemBooting) {
+        motorDuration_min++;
+        if (motorDuration_min > 240) motorDuration_min = 1;
+        display.showNumberDec(motorDuration_min, true);
+        EEPROM.write(0, motorDuration_min);
+        EEPROM.commit();
+        runTime_ms = motorDuration_min * 60000UL;
+        Serial.print("Duration set to ");
+        Serial.print(motorDuration_min);
+        Serial.println(" min");
+      }
+    }
+  }
+  lastButtonState = reading;
+}
+
+void updateMotorTimer() {
+  switch (state) {
+    case RUNNING:
+      if (millis() - motorStartTime >= runTime_ms) {
+        stopAll();
+        state = STOPPING;
+        stateChangeTime = millis();
+      }
+      break;
+
+    case STOPPING:
+      if (millis() - stateChangeTime >= 1000) {
+        runningFirstPair = !runningFirstPair;
+        if (runningFirstPair) startM1B1();
+        else startM2B2();
+        motorStartTime = millis();
+        state = RUNNING;
+      }
+      break;
+
+    case SWITCHING:
+      break;
   }
 }
 
@@ -108,9 +174,10 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   display.setBrightness(0x0f);
 
-  motorDuration_min = EEPROM.read(addrDuration);
-  if (motorDuration_min < 1 || motorDuration_min > 240) motorDuration_min = 10;
-  display.showNumberDec(motorDuration_min);
+  int saved = EEPROM.read(0);
+  if (saved >= 1 && saved <= 240) motorDuration_min = saved;
+  else motorDuration_min = 10;
+  display.showNumberDec(motorDuration_min, true);
   runTime_ms = motorDuration_min * 60000UL;
 
   WiFi.mode(WIFI_STA);
@@ -133,33 +200,9 @@ void setup() {
 }
 
 void loop() {
+  ESP.wdtFeed();
   trySendPendingStatus();
-
-  if (digitalRead(BUTTON_PIN) == LOW && !systemBooting) {
-    delay(50);
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      motorDuration_min++;
-      if (motorDuration_min > 240) motorDuration_min = 1;
-      display.showNumberDec(motorDuration_min);
-      EEPROM.write(addrDuration, motorDuration_min);
-      EEPROM.commit();
-      runTime_ms = motorDuration_min * 60000UL;
-      Serial.print("Duration set to ");
-      Serial.print(motorDuration_min);
-      Serial.println(" min");
-      while (digitalRead(BUTTON_PIN) == LOW) delay(50);
-    }
-  }
-
-  unsigned long elapsed = millis() - motorStartTime;
-  if (elapsed >= runTime_ms) {
-    stopAll();
-    delay(1000);
-    runningFirstPair = !runningFirstPair;
-    if (runningFirstPair) startM1B1();
-    else startM2B2();
-    motorStartTime = millis();
-  }
-
-  delay(50);
+  handleButton();
+  updateMotorTimer();
+  delay(10);
 }

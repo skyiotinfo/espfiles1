@@ -1,6 +1,4 @@
 
-
-// MAC of the Tank Controller Board (Board1)
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <espnow.h>
@@ -13,9 +11,8 @@ extern "C" {
 #define LED_PIN   D4
 #define UT_SENSOR D2
 
-const unsigned long MAX_RUNTIME = 120UL * 60UL * 1000UL;
+const unsigned long MAX_RUNTIME = 60UL * 60UL * 1000UL; 
 
-// ✅ REPLACE WITH ACTUAL MAC of Board1
 uint8_t senderMac[] = {0xFC, 0xF5, 0xC4, 0xBE, 0xD2, 0xDC};
 
 #define EEPROM_ADDR 0
@@ -24,7 +21,7 @@ unsigned long motorStartTime = 0;
 bool motorRunning = false;
 uint8_t lastCommand = 255;
 unsigned long lastMsgTime = 0;
-const unsigned long MSG_TIMEOUT = 10000;
+const unsigned long MSG_TIMEOUT = 30000;   
 
 void onReceive(uint8_t *mac, uint8_t *data, uint8_t len);
 
@@ -97,14 +94,14 @@ void loop() {
     sendAck();
   }
   if (motorRunning && (millis() - lastMsgTime > MSG_TIMEOUT)) {
-    Serial.println("⚠️ No message for 10s → Motor OFF");
+    Serial.println("⚠️ No message for 15s → Motor OFF");
     turnMotorOFF();
   }
   delay(50);
 }
 
 void onReceive(uint8_t *mac, uint8_t *data, uint8_t len) {
-  lastMsgTime = millis();
+  lastMsgTime = millis();   
   uint8_t value = data[0];
   Serial.print("Received: ");
   Serial.println(value);

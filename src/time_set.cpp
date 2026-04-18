@@ -4,9 +4,9 @@
 #include <TimeLib.h>
 
 uint8_t set_Sec   = 0;     /* Set the Seconds */
-uint8_t set_Minute=20;    /* Set the Minutes */
-uint8_t set_Hour  = 13;     /* Set the Hours */
-uint8_t set_Day   = 10;     /* Set the Day */
+uint8_t set_Minute=59;    /* Set the Minutes */
+uint8_t set_Hour  = 15;     /* Set the Hours */
+uint8_t set_Day   = 16;     /* Set the Day */
 uint8_t set_Month = 4;    /* Set the Month */
 uint16_t set_Year = 2026;  /* Set the Year */
 
