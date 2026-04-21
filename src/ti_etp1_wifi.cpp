@@ -12,13 +12,13 @@ extern "C" {
 #define M2_PIN    D6
 #define B1_PIN    D7
 #define B2_PIN    D8
-#define BUTTON_PIN D3
+#define BUTTON_PIN D9
 #define CLK       D1
 #define DIO       D2
 
 TM1637Display display(CLK, DIO);
 
-uint8_t board4Mac[] = {0x3C, 0x61, 0x05, 0xDC, 0x6A, 0x29};
+uint8_t board4Mac[] = {0xA4, 0xCF, 0x12, 0xED, 0xB2, 0x5F};
 
 void sendStatus();
 
@@ -31,7 +31,7 @@ const unsigned long RETRY_INTERVAL = 300;
 
 unsigned long motorStartTime = 0;
 unsigned long runTime_ms = 0;
-int motorDuration_min = 1;
+int motorDuration_min = 10;
 bool runningFirstPair = true;
 bool systemBooting = true;
 

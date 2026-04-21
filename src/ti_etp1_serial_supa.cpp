@@ -3,6 +3,8 @@
 #include <ESP8266HTTPClient.h>
 #include <map>
 
+#define LED_PIN   D8
+
 const char* ssid     = "anupam";
 const char* password = "12345678";
 
@@ -48,9 +50,13 @@ void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     wifiConnected = true;
     Serial.println("\n✅ WiFi Connected");
+      digitalWrite(LED_PIN, HIGH);
+
   } else {
     wifiConnected = false;
     Serial.println("\n❌ WiFi Failed");
+      digitalWrite(LED_PIN, LOW);
+
   }
 }
 
@@ -59,12 +65,16 @@ void checkWiFi() {
     if (!wifiConnected) {
       wifiConnected = true;
       Serial.println("✅ WiFi reconnected");
+        digitalWrite(LED_PIN, HIGH);
+
       waitingForRetry = false;
     }
   } else {
     if (wifiConnected) {
       wifiConnected = false;
       Serial.println("⚠️ WiFi lost");
+        digitalWrite(LED_PIN, LOW);
+
     }
     connectWiFi();
   }
@@ -187,7 +197,9 @@ void processQueue() {
 void setup() {
   Serial.begin(9600);
   delay(100);
+  pinMode(LED_PIN, OUTPUT);
   Serial.println("\n📡 Uploader Started");
+  digitalWrite(LED_PIN, LOW);
   connectWiFi();
 }
 

@@ -13,7 +13,7 @@ extern "C" {
 #define TANK2_PIN       D8
 
 uint8_t receiverMac[] = {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0};   
-uint8_t gatewayMac[]  = {0x3C, 0x61, 0x05, 0xDC, 0x6A, 0x29};   
+uint8_t gatewayMac[]  = {0xA4, 0xCF, 0x12, 0xED, 0xB2, 0x5F};   
 
 const unsigned long MAX_RUNTIME_TANK2 = 5UL * 60UL * 1000UL;
 const unsigned long RETRY_INTERVAL    = 300;
