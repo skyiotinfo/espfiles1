@@ -173,7 +173,7 @@ void setup() {
   pinMode(B2_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   display.setBrightness(0x0f);
-
+  stopAll();
   int saved = EEPROM.read(0);
   if (saved >= 1 && saved <= 240) motorDuration_min = saved;
   else motorDuration_min = 10;

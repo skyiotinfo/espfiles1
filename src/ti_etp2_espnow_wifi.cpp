@@ -12,11 +12,11 @@ extern "C" {
 #define UT_SENSOR_PIN   D5   // LOW = tank2 empty)
 #define TANK2_PIN       D8
 
-uint8_t receiverMac[] = {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0};   
+uint8_t receiverMac[] = {0xD8, 0xBF, 0xC0, 0xFD, 0x74, 0x1D}; 
 uint8_t gatewayMac[]  = {0xA4, 0xCF, 0x12, 0xED, 0xB2, 0x5F};   
 
 const unsigned long MAX_RUNTIME_TANK2 = 5UL * 60UL * 1000UL;
-const unsigned long RETRY_INTERVAL    = 300;
+const unsigned long RETRY_INTERVAL    = 1000;
 
 unsigned long lastHeartbeatSend = 0;
 unsigned long lastHeartbeatAck = 0;
@@ -108,7 +108,14 @@ void setup() {
   esp_now_add_peer(receiverMac, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
   esp_now_add_peer(gatewayMac, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
 }
-
+bool debounceRead(int pin) {
+  int count = 0;
+  for (int i = 0; i < 5; i++) {
+    if (digitalRead(pin) == LOW) count++;
+    delay(2);
+  }
+  return (count >= 4);
+}
 void loop() {
   static unsigned long lastRead = 0;
   static unsigned long lastUTCheck = 0;
@@ -117,8 +124,8 @@ void loop() {
     lastDiagnosticPrint = millis();
     bool rawEmpty = digitalRead(LOW_SENSOR_PIN);
     bool rawFull  = digitalRead(HIGH_SENSOR_PIN);
-    bool emptyNow = (rawEmpty == LOW);
-    bool fullNow  = (rawFull == LOW);
+  bool fullNow  = debounceRead(HIGH_SENSOR_PIN);
+bool emptyNow = debounceRead(LOW_SENSOR_PIN);
     Serial.printf("📊 Sensors: EMPTY=%d, FULL=%d | State=%d | Tank1=%d, M3=%d, Tank2=%d\n",
                   emptyNow, fullNow, cycleState, motorIsOn, digitalRead(M3_PIN), tank2Running);
   }
@@ -126,8 +133,8 @@ void loop() {
   if (millis() - lastRead > 200) {
     bool rawFull  = digitalRead(HIGH_SENSOR_PIN);
     bool rawEmpty = digitalRead(LOW_SENSOR_PIN);
-    bool fullNow  = (rawFull == LOW);
-    bool emptyNow = (rawEmpty == LOW);
+bool fullNow  = debounceRead(HIGH_SENSOR_PIN);
+bool emptyNow = debounceRead(LOW_SENSOR_PIN);
     lastRead = millis();
 
     bool emptyChanged = (emptyNow != lastEmptyState);
