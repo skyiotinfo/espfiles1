@@ -3,10 +3,11 @@
 #include <TM1637Display.h>
 #include <LoRa.h>
 #include <SPI.h>
+#include <stdlib.h>   // for random()
 
 // Display Module connection pins (Digital Pins)
 #define CLK D3
-#define DIO D4
+#define DIO D5
 
 #define ss D8
 #define rst D0
@@ -34,7 +35,6 @@ int count = 0;
 int sound = 0;
 int temp_count1 = 0;
 
-
 const uint8_t seg_empty[] = {
   0x00,
   SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,
@@ -50,10 +50,10 @@ const uint8_t seg_full[] = {
 };
 
 const uint8_t seg_nodata[] = {
-  SEG_A | SEG_E | SEG_F | SEG_G,               
-  SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,      
-  SEG_D | SEG_E | SEG_F,                       
-  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G        
+  SEG_A | SEG_E | SEG_F | SEG_G,
+  SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,
+  SEG_D | SEG_E | SEG_F,
+  SEG_A | SEG_D | SEG_E | SEG_F | SEG_G
 };
 
 TM1637Display display(CLK, DIO);
@@ -130,65 +130,67 @@ void setup() {
     if (temp_count1 >= 30) break;
     delay(500);
   }
-
 }
 
 void loop() {
   int packetSize = LoRa.parsePacket();
+
   if (packetSize) {
-    String LoRaData = LoRa.readString();
+    String LoRaData = "";
+    while (LoRa.available()) {
+      LoRaData += (char)LoRa.read();
+    }
+    LoRaData.trim();
+
     Serial.print("Received packet: ");
     Serial.println(LoRaData);
 
     String deviceid = LoRaData.substring(0, 6);
     String devicestatus = LoRaData.substring(6, 8);
 
+    Serial.print("Device ID: ");
     Serial.println(deviceid);
+    Serial.print("Device Status: ");
     Serial.println(devicestatus);
 
-    if (deviceid.equals("200002") && devicestatus.equals("00")) {
-      display.clear();
-      display.setSegments(seg_full);
-      delay(500);
-      tcount1++;
-      if (tcount1 >= 4 && digitalRead(buzzer) == 1) {
-        digitalWrite(buzzer, LOW);
-        motor_status = 0;
-        display.showNumberDec(0, false);
-        motor_time = motor_duration * 60;
-        tcount1 = 0;
-        sensor_status = 0;
-      }
-    } else {
-      tcount1 = 0;
+    // ================= MOTOR OFF =================
+    if (deviceid == "200002" && devicestatus == "00") {
+      Serial.println("MOTOR OFF COMMAND");
+
+      digitalWrite(buzzer, LOW);
+      motor_status = 0;
+      sensor_status = 0;
+      display.showNumberDec(0, false);
+      motor_time = motor_duration * 60;
+
+      delay(random(10, 50));   // small random delay to avoid collision
+      LoRa.beginPacket();
+      LoRa.print("200002ACK0");
+      LoRa.endPacket();
+      Serial.println("ACK SENT -> 200002ACK0");
+    }
+    // ================= MOTOR ON =================
+    else if (deviceid == "200002" && devicestatus == "11") {
+      Serial.println("MOTOR ON COMMAND");
+
+      digitalWrite(buzzer, HIGH);
+      motor_status = 1;
+      sensor_status = 1;
+      motor_time = motor_duration * 60;
+
+      delay(random(10, 50));
+      LoRa.beginPacket();
+      LoRa.print("200002ACK1");
+      LoRa.endPacket();
+      Serial.println("ACK SENT -> 200002ACK1");
+    }
+    // ================= NO DATA =================
+    else if (deviceid == "200002" && devicestatus == "22") {
+      Serial.println("NO DATA");
+      sensor_status = 2;
     }
 
-    if (deviceid.equals("200002") && devicestatus.equals("11")) {
-      tcount2++;
-      display.clear();
-      display.setSegments(seg_empty);
-      if (tcount2 >= 4) {
-        digitalWrite(buzzer, HIGH);
-        motor_status = 1;
-        tcount2 = 0;
-        sensor_status = 1;
-      }
-    } else {
-      tcount2 = 0;
-    }
-
-    if (deviceid.equals("200002") && devicestatus.equals("22")) {
-      tcount3++;
-      if (tcount3 >= 2) {
-        Serial.println("Tank No Data.........");
-        tcount3 = 0;
-        sensor_status = 2;
-      }
-    } else {
-      tcount3 = 0;
-    }
-
-    Serial.print("RSSI :");
+    Serial.print("RSSI: ");
     Serial.println(LoRa.packetRssi());
   }
 

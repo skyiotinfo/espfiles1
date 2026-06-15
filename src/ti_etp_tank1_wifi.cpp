@@ -94,7 +94,7 @@ void loop() {
     sendAck();
   }
   if (motorRunning && (millis() - lastMsgTime > MSG_TIMEOUT)) {
-    Serial.println("⚠️ No message for 15s → Motor OFF");
+    Serial.println("⚠️ No message for 30s → Motor OFF");
     turnMotorOFF();
   }
   delay(50);

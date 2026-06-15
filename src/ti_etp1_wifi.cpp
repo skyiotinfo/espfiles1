@@ -13,8 +13,8 @@ extern "C" {
 #define B1_PIN    D7
 #define B2_PIN    D8
 #define BUTTON_PIN D9
-#define CLK       D1
-#define DIO       D2
+#define CLK       D3
+#define DIO       D4
 
 TM1637Display display(CLK, DIO);
 
@@ -123,7 +123,7 @@ void handleButton() {
       buttonConfirmed = reading;
       if (buttonConfirmed && !systemBooting) {
         motorDuration_min++;
-        if (motorDuration_min > 240) motorDuration_min = 1;
+        if (motorDuration_min > 240) motorDuration_min = 10;
         display.showNumberDec(motorDuration_min, true);
         EEPROM.write(0, motorDuration_min);
         EEPROM.commit();
@@ -175,7 +175,7 @@ void setup() {
   display.setBrightness(0x0f);
   stopAll();
   int saved = EEPROM.read(0);
-  if (saved >= 1 && saved <= 240) motorDuration_min = saved;
+  if (saved >= 10 && saved <= 240) motorDuration_min = saved;
   else motorDuration_min = 10;
   display.showNumberDec(motorDuration_min, true);
   runTime_ms = motorDuration_min * 60000UL;

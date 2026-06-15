@@ -15,7 +15,7 @@ extern "C" {
 uint8_t receiverMac[] = {0xD8, 0xBF, 0xC0, 0xFD, 0x74, 0x1D}; 
 uint8_t gatewayMac[]  = {0xA4, 0xCF, 0x12, 0xED, 0xB2, 0x5F};   
 
-const unsigned long MAX_RUNTIME_TANK2 = 5UL * 60UL * 1000UL;
+const unsigned long MAX_RUNTIME_TANK2 = 1UL * 60UL * 1000UL;
 const unsigned long RETRY_INTERVAL    = 1000;
 
 unsigned long lastHeartbeatSend = 0;
@@ -215,8 +215,8 @@ bool emptyNow = debounceRead(LOW_SENSOR_PIN);
   if (tank2Running && (millis() - tank2StartTime > MAX_RUNTIME_TANK2)) {
     Serial.println("⚠️ Tank2 TIMEOUT – forcing stop");
     allOffSafe();
-    startM3();
-    cycleState = WAIT_EMPTY_RESTART_CYCLE;
+    sendMotorCommand(1);
+    cycleState = WAIT_FULL_STOP_TANK1;
   }
 
   if (requestActive && !motorAckReceived) {
@@ -312,17 +312,17 @@ void handleHeartbeat() {
     sendMotorCommand(1);
     Serial.println("❤️ Heartbeat: resending motor start");
   }
-  const unsigned long HEARTBEAT_TIMEOUT = 15000;
-  if (now - lastHeartbeatAck >= HEARTBEAT_TIMEOUT) {
-    Serial.println("💀 Heartbeat timeout! No ACK for 15 seconds.");
-    motorIsOn = false;
-    heartbeatActive = false;
-    allOffSafe();
-    cycleState = WAIT_EMPTY_START_TANK1;
-    lastEmptyState = digitalRead(LOW_SENSOR_PIN) == LOW;
-    lastFullState  = digitalRead(HIGH_SENSOR_PIN) == LOW;
-    Serial.println("System reset due to heartbeat timeout.");
-  }
+  // const unsigned long HEARTBEAT_TIMEOUT = 120000;
+  // if (now - lastHeartbeatAck >= HEARTBEAT_TIMEOUT) {
+  //   Serial.println("💀 Heartbeat timeout! No ACK for 120 seconds.");
+  //   motorIsOn = false;
+  //   heartbeatActive = false;
+  //   allOffSafe();
+  //   cycleState = WAIT_EMPTY_START_TANK1;
+  //   lastEmptyState = digitalRead(LOW_SENSOR_PIN) == LOW;
+  //   lastFullState  = digitalRead(HIGH_SENSOR_PIN) == LOW;
+  //   Serial.println("System reset due to heartbeat timeout.");
+  // }
 }
 
 void allOffSafe() {

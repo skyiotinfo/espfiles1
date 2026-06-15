@@ -2,7 +2,6 @@
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-// ========== USER CONFIGURATION ==========
 const char* ssid     = "anupam";
 const char* password = "12345678";
 
@@ -11,29 +10,24 @@ const char* supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXB
 
 const int device_id = 103201;
 
-// Pin definitions
 const int hsen = D1;
 const int lsen = D2;
 const int led = LED_BUILTIN;
 
-// Debounce settings
 const int HIGH_DEBOUNCE_COUNT = 3;
 const int LOW_DEBOUNCE_COUNT  = 3;
 
-// Sensor state variables
 int temp_count1 = 0;
 int temp_count2 = 0;
-int last_tank_status = -1;   // -1 unknown, 0 = high (full), 1 = low (empty)
+int last_tank_status = -1;   
 
-// Pending update (for when WiFi is down)
-int pending_status = -1;     // -1 means no pending update
+int pending_status = -1;     
 unsigned long lastWiFiCheck = 0;
-const unsigned long WIFI_CHECK_INTERVAL = 5000; // check every 5 seconds
+const unsigned long WIFI_CHECK_INTERVAL = 5000; 
 
 WiFiClientSecure client;
 HTTPClient http;
 
-// ========== HELPER FUNCTIONS ==========
 void connectWiFi() {
   Serial.print("Connecting to WiFi");
   WiFi.begin(ssid, password);
@@ -69,11 +63,9 @@ void sendTankStatus(int status) {
 
   if (httpCode > 0) {
     Serial.printf("Supabase update sent (status=%d), HTTP code: %d\n", status, httpCode);
-    // If this was a pending update, clear it
     if (pending_status == status) pending_status = -1;
   } else {
     Serial.printf("Failed to send update, HTTP error: %d\n", httpCode);
-    // If send fails (e.g., temporary server issue), keep as pending
     pending_status = status;
   }
   http.end();
@@ -86,7 +78,6 @@ void checkAndSendPending() {
   }
 }
 
-// ========== SETUP ==========
 void setup() {
   Serial.begin(115200);
   pinMode(hsen, INPUT_PULLUP);
@@ -98,33 +89,26 @@ void setup() {
   Serial.println("Tank level monitor started. Updates will be stored if WiFi is down.");
 }
 
-// ========== MAIN LOOP ==========
 void loop() {
-  // ---- WiFi handling ----
   if (WiFi.status() != WL_CONNECTED) {
-    // try to reconnect every WIFI_CHECK_INTERVAL
     if (millis() - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
       lastWiFiCheck = millis();
       Serial.println("WiFi lost, attempting reconnection...");
       connectWiFi();
       if (WiFi.status() == WL_CONNECTED) {
-        // just reconnected, try to send any pending status
         checkAndSendPending();
       }
     }
   } else {
-    // WiFi is connected, periodically check for pending updates
     if (millis() - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
       lastWiFiCheck = millis();
       checkAndSendPending();
     }
   }
 
-  // ---- Sensor reading ----
   bool highActive = (digitalRead(hsen) == LOW);
   bool lowActive  = (digitalRead(lsen) == LOW);
 
-  // High water detection
   if (highActive) {
     temp_count1++;
     temp_count2 = 0;
@@ -132,13 +116,12 @@ void loop() {
     if (temp_count1 >= HIGH_DEBOUNCE_COUNT) {
       if (last_tank_status != 0) {
         last_tank_status = 0;
-        sendTankStatus(0);   // will store if WiFi down
+        sendTankStatus(0);  
         Serial.println("Tank status set to 0 (High water)");
       }
       temp_count1 = 0;
     }
   }
-  // Low water detection
   else if (lowActive) {
     temp_count2++;
     temp_count1 = 0;
@@ -152,14 +135,11 @@ void loop() {
       temp_count2 = 0;
     }
   }
-  // Normal level (between sensors)
   else {
     temp_count1 = 0;
     temp_count2 = 0;
-    // No status change here
   }
 
-  // LED blink to show activity
   digitalWrite(led, LOW);
   delay(100);
   digitalWrite(led, HIGH);
