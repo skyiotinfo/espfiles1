@@ -29,7 +29,7 @@ Schedule schedules[3] = {
   {10,  13, 44, 60, false},
   {1,   13, 36, 60, false},
 };
-
+//
 const unsigned long HB_MOTOR_ON_INTERVAL  = 10000UL;
 const unsigned long HB_MOTOR_OFF_INTERVAL = 600000UL;
 const unsigned long ACK_TIMEOUT_MS        = 3000UL;

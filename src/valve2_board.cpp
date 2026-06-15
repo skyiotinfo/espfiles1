@@ -95,7 +95,7 @@ void onReceive(uint8_t *mac, uint8_t *data, uint8_t len) {
     Serial.printf("📥 ACK from V3  : %03d\n", msg);
     waitingV3Ack  = false;
     fwdRetryCount = 0;
-
+//
     // Send updated ACK now that V3 state is known
     uint16_t fullAck = buildAck(msg);
 
