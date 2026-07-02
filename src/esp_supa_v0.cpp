@@ -8,11 +8,11 @@
 #include "RTClib.h"
 #include <ESP8266HTTPClient.h>
 
-void compareAndSyncTime();
-void updateTable(String token, int st, int ds);
-void updateackTable(String token, int ack);
-int login_email(String email_a, String password_a);
-bool isOnline();
+void  compareAndSyncTime();
+void  updateTable(String token, int st, int ds);
+void  updateackTable(String token, int ack);
+int   login_email(String email_a, String password_a);
+bool  isOnline();
 
 const int device_id = 110001;
 
