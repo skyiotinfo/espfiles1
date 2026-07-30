@@ -59,6 +59,10 @@ void send_data(){
     LoRa.print(vstate2);
     LoRa.endPacket(); 
     Serial.print(".");
+    Serial.print(networkid);
+    Serial.print(deviceid);
+    Serial.print(vstate1);
+    Serial.print(vstate2);
     delay(100);
   }
   Serial.println("");
