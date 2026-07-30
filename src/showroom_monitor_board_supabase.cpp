@@ -19,7 +19,7 @@ const uint8_t LED         = D8;
 String lineBuf;
 
 void connectWiFi() {
-  digitalWrite(LED, LOW); // NEW: LED off the moment we're (re)connecting, not connected
+  digitalWrite(LED, LOW); 
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -31,13 +31,13 @@ void connectWiFi() {
     if (millis() - start > 20000UL) {
       Serial1.println(F("\nWiFi timeout, retrying..."));
       WiFi.disconnect();
-      digitalWrite(LED, LOW); // still not connected
+      digitalWrite(LED, LOW); 
       WiFi.begin(WIFI_SSID, WIFI_PASS);
       start = millis();
     }
   }
 
-  digitalWrite(LED, HIGH); // NEW: connected -> LED on
+  digitalWrite(LED, HIGH); 
   Serial1.print(F("\nWiFi connected, IP: "));
   Serial1.println(WiFi.localIP());
 }
@@ -89,7 +89,7 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi(); // NEW behavior inherited from connectWiFi(): LED off during this call, on again once it succeeds
+    connectWiFi(); 
   }
 
   while (Serial.available()) {

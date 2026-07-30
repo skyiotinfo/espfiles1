@@ -19,10 +19,10 @@ uint8_t motorMac[6] = {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0};
 const unsigned long DEBOUNCE_MS             = 200;    
 const unsigned long EMPTY_CONFIRM_MS        = 5000;   
 const unsigned long FULL_CONFIRM_MS         = 3000;   
-const unsigned long REQUEST_RETRY_MS        = 3000;   // was 3000 -- more time for a slow reply to arrive before resending
-const unsigned long HEARTBEAT_MS            = 8000;  // was 8000 -- less channel traffic, more room for real requests
-const unsigned long OPEN_REQUEST_TIMEOUT_MS = 120000; // was 60000 -- don't give up on a genuinely slow (not lost) reply
-const unsigned long MOTOR_SILENCE_TIMEOUT_MS = 120000; // was 60000 -- same reasoning while valve is open
+const unsigned long REQUEST_RETRY_MS        = 3000;   
+const unsigned long HEARTBEAT_MS            = 8000;  
+const unsigned long OPEN_REQUEST_TIMEOUT_MS = 120000; 
+const unsigned long MOTOR_SILENCE_TIMEOUT_MS = 120000; 
 
 const unsigned long VALVE_MAX_RUN_MS  = 30UL * 60UL * 1000UL; 
 const unsigned long VALVE_COOLDOWN_MS = 5UL  * 60UL * 1000UL; 
@@ -192,7 +192,7 @@ void evaluateAndRequest() {
     wantOpenRequested  = false;
     openRequestStreakStart = 0;
     sendRequest(false);
-  } else if (heartbeatDue && !wantOpenRequested && !wantCloseRequested) { // FIX: don't heartbeat over a pending request
+  } else if (heartbeatDue && !wantOpenRequested && !wantCloseRequested) { 
     sendRequest(valveOpen);
   }
 
