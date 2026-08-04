@@ -7,7 +7,7 @@ extern "C" {
 
 const uint8_t PUMP_PIN  = D8;
 
-const uint8_t DOOR_PIN[3] = {D1, D2};
+const uint8_t DOOR_PIN[3] = {D1, D2, D6};
 const uint8_t NUM_SAFETY_PINS = 3;
 const unsigned long INTERLOCK_WARN_INTERVAL_MS = 2000;
 
@@ -24,7 +24,7 @@ bool doorOpenForNode(uint8_t id) {
 }
 
 
-const uint8_t SOURCE_EMPTY_PIN = D5;
+const uint8_t SOURCE_EMPTY_PIN = D7;
 bool sourceEmptyConnected() {
   return digitalRead(SOURCE_EMPTY_PIN) == LOW;
 }

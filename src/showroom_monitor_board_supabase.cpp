@@ -18,6 +18,8 @@ const uint8_t LED         = D8;
 
 String lineBuf;
 
+unsigned long lastWifiAttemptMs = 0;
+
 void connectWiFi() {
   digitalWrite(LED, LOW); 
 
@@ -42,9 +44,21 @@ void connectWiFi() {
   Serial1.println(WiFi.localIP());
 }
 
+void wifiReconnectIfNeeded() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  digitalWrite(LED, LOW); 
+  unsigned long now = millis();
+  if (now - lastWifiAttemptMs < 30000UL) return;
+  lastWifiAttemptMs = now;
+  Serial1.println(F("[WIFI] Reconnecting (non-blocking)"));
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+}
+
 bool postToSupabase(const String &jsonPayload) {
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+    Serial1.println(F("WiFi not connected, skipping this post"));
+    return false;
   }
 
   BearSSL::WiFiClientSecure client;
@@ -74,6 +88,7 @@ bool postToSupabase(const String &jsonPayload) {
     Serial1.printf("Supabase insert FAILED (HTTP %d): %s\n", code, http.getString().c_str());
   }
   http.end();
+  digitalWrite(LED, HIGH); 
   return ok;
 }
 
@@ -83,14 +98,12 @@ void setup() {
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW); 
   Serial1.println(F("\nRelay Board (ESP8266) booting..."));
-  connectWiFi();
+  connectWiFi(); 
   Serial1.println(F("Relay Board ready - waiting for data from monitor board...\n"));
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi(); 
-  }
+  wifiReconnectIfNeeded();
 
   while (Serial.available()) {
     char c = Serial.read();
