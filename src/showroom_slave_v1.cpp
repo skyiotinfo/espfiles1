@@ -5,7 +5,7 @@ extern "C" {
   #include "user_interface.h"
 }
 
-#define DEVICE_ID 3
+#define DEVICE_ID 2
 
 const uint8_t EMPTY_SENSOR_PIN  = D2;
 const uint8_t FULL_SENSOR_PIN   = D1;
@@ -13,16 +13,16 @@ const uint8_t VALVE_PIN         = D8;
 const bool    SENSOR_ACTIVE_LOW = true;
 
 //uint8_t motorMac[6] = {0x48, 0x55, 0x19, 0xEC, 0xAA, 0xCF};
-uint8_t motorMac[6] = {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0};
+uint8_t motorMac[6] = {0xFC, 0xF5, 0xC4, 0xBE, 0x5D, 0xD9};
 //fc:f5:c4:be:5d:d9
 
 const unsigned long DEBOUNCE_MS             = 200;    
-const unsigned long EMPTY_CONFIRM_MS        = 5000;   
-const unsigned long FULL_CONFIRM_MS         = 3000;   
-const unsigned long REQUEST_RETRY_MS        = 3000;   
-const unsigned long HEARTBEAT_MS            = 8000;  
-const unsigned long OPEN_REQUEST_TIMEOUT_MS = 120000; 
-const unsigned long MOTOR_SILENCE_TIMEOUT_MS = 120000; 
+const unsigned long EMPTY_CONFIRM_MS        = 15000;   
+const unsigned long FULL_CONFIRM_MS         = 5000;   
+const unsigned long REQUEST_RETRY_MS        = 3000;   // was 3000 -- more time for a slow reply to arrive before resending
+const unsigned long HEARTBEAT_MS            = 4000;  // was 8000 -- less channel traffic, more room for real requests
+const unsigned long OPEN_REQUEST_TIMEOUT_MS = 120000; // was 60000 -- don't give up on a genuinely slow (not lost) reply
+const unsigned long MOTOR_SILENCE_TIMEOUT_MS = 120000; // was 60000 -- same reasoning while valve is open
 
 const unsigned long VALVE_MAX_RUN_MS  = 30UL * 60UL * 1000UL; 
 const unsigned long VALVE_COOLDOWN_MS = 5UL  * 60UL * 1000UL; 
@@ -192,7 +192,7 @@ void evaluateAndRequest() {
     wantOpenRequested  = false;
     openRequestStreakStart = 0;
     sendRequest(false);
-  } else if (heartbeatDue && !wantOpenRequested && !wantCloseRequested) { 
+  } else if (heartbeatDue && !wantOpenRequested && !wantCloseRequested) { // FIX: don't heartbeat over a pending request
     sendRequest(valveOpen);
   }
 

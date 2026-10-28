@@ -7,9 +7,11 @@
 const char* WIFI_SSID = "VIBHASHREE HONDA2.4";
 const char* WIFI_PASS = "VIBHA@123";
 
+
 const char* SUPABASE_HOST     = "nntytldbmnjraytdmasp.supabase.co"; 
 const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udHl0bGRibW5qcmF5dGRtYXNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEyODc0MTIsImV4cCI6MjA3Njg2MzQxMn0.lcleFnldZ-6E2Qr0UWQqBcMGBHX3j2l_ldApX0gmnfc";
 const char* SUPABASE_RPC_PATH = "/rest/v1/rpc/upsert_motor_status";
+const char* SUPABASE_RPC_PATH_TANK_PUMP = "/rest/v1/rpc/upsert_tank_pump_status"; 
 
 const uint8_t LED         = D8;
 
@@ -19,6 +21,14 @@ const uint8_t LED         = D8;
 String lineBuf;
 
 unsigned long lastWifiAttemptMs = 0;
+
+const unsigned long RESTART_INTERVAL_MS = 1UL * 60UL * 60UL * 1000UL; 
+
+void checkScheduledRestart() {
+  if (millis() >= RESTART_INTERVAL_MS) {
+    ESP.restart();
+  }
+}
 
 void connectWiFi() {
   digitalWrite(LED, LOW); 
@@ -55,7 +65,8 @@ void wifiReconnectIfNeeded() {
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 }
 
-bool postToSupabase(const String &jsonPayload) {
+
+bool postToSupabase(const String &jsonPayload, const char* rpcPath = SUPABASE_RPC_PATH) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial1.println(F("WiFi not connected, skipping this post"));
     return false;
@@ -66,7 +77,7 @@ bool postToSupabase(const String &jsonPayload) {
   client.setBufferSizes(1024, 1024); 
 
   HTTPClient http;
-  String url = String("https://") + SUPABASE_HOST + SUPABASE_RPC_PATH;
+  String url = String("https://") + SUPABASE_HOST + rpcPath; 
 
   if (!http.begin(client, url)) {
     Serial1.println(F("HTTPClient begin() failed"));
@@ -104,6 +115,7 @@ void setup() {
 
 void loop() {
   wifiReconnectIfNeeded();
+  checkScheduledRestart(); 
 
   while (Serial.available()) {
     char c = Serial.read();
@@ -117,7 +129,13 @@ void loop() {
           Serial1.printf("Bad JSON from monitor board (%s): %s\n", err.c_str(), lineBuf.c_str());
         } else {
           Serial1.println("Received: " + lineBuf);
-          postToSupabase(lineBuf);
+
+          const char* deviceId = doc["device_id"] | "";
+          if (strcmp(deviceId, "tank-pump-1") == 0) {
+            postToSupabase(lineBuf, SUPABASE_RPC_PATH_TANK_PUMP);
+          } else {
+            postToSupabase(lineBuf); 
+          }
         }
       }
       lineBuf = "";

@@ -8,19 +8,20 @@ extern "C" {
 #define REFLECTOR "A"
 
 
-uint8_t NEXT_HOP_TOWARD_MOTOR_MAC[6] = {0xFC, 0xF5, 0xC4, 0xBE, 0xD2, 0xDC}; // <-- Reflector B's MAC fc:f5:c4:be:d2:dc
+uint8_t NEXT_HOP_TOWARD_MOTOR_MAC[6] = {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0}; // <-- Reflector B's MAC fc:f5:c4:be:d2:dc
 
-
+// This relay now only ever handles nodes 3 and 4.
 const uint8_t NODE_ID_MIN = 3;
 const uint8_t NODE_ID_MAX = 4;
 
-
+// Unchanged -- Reflector A still talks directly to the real node
+// boards, since it's the hop closest to them.
 uint8_t RELAY_SLAVE_MAC[NODE_ID_MAX + 1][6] = {
     {0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0},
-    {0xFC, 0xF5, 0xC4, 0xBE, 0xBF, 0x31}, // node 3's  board MAC
-    {0xFC, 0xF5, 0xC4, 0xBE, 0x6D, 0xCE}, // node 4's  board MAC
+    {0xFC, 0xF5, 0xC4, 0xBE, 0xAA, 0xA8}, // node 3's real board MAC
+    {0xFC, 0xF5, 0xC4, 0xBE, 0x6D, 0xCE}, // node 4's real board MAC
 };
 
 volatile uint16_t rxQueue[16];

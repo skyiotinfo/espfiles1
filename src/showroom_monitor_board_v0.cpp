@@ -1,5 +1,3 @@
-
-
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <espnow.h>
@@ -9,6 +7,9 @@ extern "C" {
 }
 
 uint8_t motorMac[6] = {0xFC, 0xF5, 0xC4, 0xBE, 0x5D, 0xD9};
+
+// ADDED: Device 1 (tank/pump) board -- fill in with its real MAC once flashed
+uint8_t device1Mac[6] = {0x24, 0xD7, 0xEB, 0xEF, 0x8E, 0x9C};//24:d7:eb:ef:8e:9c
 
 const uint8_t NUM_NODES = 4;
 const unsigned long STALE_WARN_MS = 20000UL;
@@ -22,9 +23,23 @@ struct StatusPacket {
   uint16_t nodeLastSeenSec[5];
 };
 
+// ADDED: packet shape sent by Device 1 (tank/pump controller)
+struct Device1Packet {
+  uint8_t node1;
+  uint8_t node5;
+  uint8_t pump2;
+  uint8_t node1_valve;  // ADDED: hpin state, 1 = HIGH
+};
+
 volatile StatusPacket rxPacket;
 volatile bool rxAvailable = false;
 volatile uint8_t rxLen = 0;
+
+// ADDED: Device 1 receive state
+volatile Device1Packet rxPacket1;
+volatile bool rxAvailable1 = false;
+unsigned long device1PacketCount = 0;
+#define DEVICE1_ID "tank-pump-1"
 
 bool everReceivedPacket = false;
 unsigned long lastPacketAt = 0;
@@ -35,10 +50,14 @@ unsigned long packetCount = 0;
 #define DEVICE_ID   "monitor-board-1"
 
 void onReceive(uint8_t *mac, uint8_t *data, uint8_t len) {
-  if (len != sizeof(StatusPacket)) return;
-  memcpy((void *)&rxPacket, data, sizeof(StatusPacket));
-  rxLen = len;
-  rxAvailable = true;
+  if (len == sizeof(StatusPacket)) {
+    memcpy((void *)&rxPacket, data, sizeof(StatusPacket));
+    rxLen = len;
+    rxAvailable = true;
+  } else if (len == sizeof(Device1Packet)) {   // ADDED
+    memcpy((void *)&rxPacket1, data, sizeof(Device1Packet));
+    rxAvailable1 = true;
+  }
 }
 
 void onSent(uint8_t *mac, uint8_t status) {}
@@ -68,6 +87,20 @@ void sendToRelay(const StatusPacket &pkt) {
   Serial.println();           
 }
 
+// ADDED: build and forward Device 1's JSON line, same serial link
+void sendDevice1ToRelay(const Device1Packet &pkt) {
+  StaticJsonDocument<256> doc;
+  doc["device_id"]   = DEVICE1_ID;
+  doc["node1"]        = pkt.node1;
+  doc["node5"]        = pkt.node5;
+  doc["pump2"]        = pkt.pump2;
+  doc["node1_valve"]  = pkt.node1_valve;  // ADDED
+  doc["pkt"]          = device1PacketCount;
+
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
 void debugPrintPacket(const StatusPacket &pkt) {
   Serial1.println(F("\n===== MOTOR BOARD STATUS ====="));
   Serial1.printf("Pump  : %s\n", pkt.pumpOn ? "ON" : "OFF");
@@ -88,6 +121,17 @@ void debugPrintPacket(const StatusPacket &pkt) {
   Serial1.println(F("===============================\n"));
 }
 
+// ADDED: debug print for Device 1 packets
+void debugPrintDevice1(const Device1Packet &pkt) {
+  Serial1.println(F("\n===== DEVICE1 (TANK/PUMP) STATUS ====="));
+  Serial1.printf("Node1 (solenoid tank) : %d\n", pkt.node1);
+  Serial1.printf("Node5 (main tank)     : %d\n", pkt.node5);
+  Serial1.printf("Pump2                 : %s\n", pkt.pump2 ? "ON" : "OFF");
+  Serial1.printf("Node1 Valve           : %s\n", pkt.node1_valve ? "OPEN" : "CLOSED");
+  Serial1.printf("Packet #%lu -> forwarded to relay board\n", device1PacketCount);
+  Serial1.println(F("========================================\n"));
+}
+
 void handleQueued() {
   if (!rxAvailable) return;
 
@@ -103,6 +147,22 @@ void handleQueued() {
 
   sendToRelay(local);
   debugPrintPacket(local);
+}
+
+// ADDED: handle queued Device 1 packets, mirrors handleQueued() above
+void handleQueued1() {
+  if (!rxAvailable1) return;
+
+  noInterrupts();
+  Device1Packet local1;
+  memcpy(&local1, (const void *)&rxPacket1, sizeof(Device1Packet));
+  rxAvailable1 = false;
+  interrupts();
+
+  device1PacketCount++;
+
+  sendDevice1ToRelay(local1);
+  debugPrintDevice1(local1);
 }
 
 void checkStale() {
@@ -138,12 +198,14 @@ void setup() {
   esp_now_register_send_cb(onSent);
   esp_now_register_recv_cb(onReceive);
   esp_now_add_peer(motorMac, ESP_NOW_ROLE_CONTROLLER, 1, NULL, 0);
+  esp_now_add_peer(device1Mac, ESP_NOW_ROLE_CONTROLLER, 1, NULL, 0); // ADDED
 
   Serial1.println(F("Monitor Board ready - waiting for status packets...\n"));
 }
 
 void loop() {
   handleQueued();
+  handleQueued1(); // ADDED
   checkStale();
   delay(50);
 }

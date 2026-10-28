@@ -29,7 +29,7 @@ bool sourceEmptyConnected() {
   return digitalRead(SOURCE_EMPTY_PIN) == LOW;
 }
 
-const unsigned long SOURCE_EMPTY_CONFIRM_MS = 5000UL;
+const unsigned long SOURCE_EMPTY_CONFIRM_MS = 15000UL;
 bool          prevSourceEmptyRaw       = false;
 unsigned long sourceEmptySustainedSince = 0; 
 
@@ -54,14 +54,19 @@ uint8_t slaveMac[NUM_NODES + 1][6] = {
     //{0x48, 0x55, 0x19, 0xEC, 0xAA, 0xCF},
     {0xCC, 0x50, 0xE3, 0x6B, 0x42, 0x85},
     {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0}, // 50:02:91:dd:6b:d7
-    {0xFC, 0xF5, 0xC4, 0xBE, 0xD2, 0xDC}, // 50:02:91:dd:6b:d7
+    {0xD8, 0xBF, 0xC0, 0x06, 0xDE, 0xC0}, // 50:02:91:dd:6b:d7
 };
 
 const unsigned long PUMP_STOP_SETTLE_MS  = 600;
 const unsigned long VALVE_OPEN_SETTLE_MS = 300;
 
+const unsigned long PUMP_RESTART_DELAY_MS = 120000UL; // 2 minutes
+unsigned long        lastPumpStopAt        = 0;
+bool                 pumpStoppedOnce        = false; 
 
-const unsigned long NODE_SILENCE_TRIGGER_MS = 8000UL; 
+const unsigned long PERIODIC_RESTART_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL; // 6 hours 
+
+const unsigned long NODE_SILENCE_TRIGGER_MS = 20000UL; 
 const uint8_t       WATCHDOG_COUNTDOWN_START = 5;     
 const unsigned long WATCHDOG_TICK_MS         = 50UL;
 
@@ -111,6 +116,7 @@ uint8_t countOpenExcluding(uint8_t excludeId);
 uint8_t countOpen();
 void startPump();
 void stopPump();
+bool pumpRestartCooldownOk(); 
 void handleOpenRequest(uint8_t id);
 void handleCloseRequest(uint8_t id);
 void handleIncoming(uint16_t signal);
@@ -146,6 +152,11 @@ uint8_t countOpen() {
   return countOpenExcluding(0);
 }
 
+bool pumpRestartCooldownOk() {
+  if (!pumpStoppedOnce) return true;
+  return (millis() - lastPumpStopAt) >= PUMP_RESTART_DELAY_MS;
+}
+
 void startPump() {
   if (!pumpRunning) {
     digitalWrite(PUMP_PIN, HIGH);
@@ -158,9 +169,19 @@ void stopPump() {
   if (pumpRunning) {
     digitalWrite(PUMP_PIN, LOW);
     pumpRunning = false;
+    lastPumpStopAt = millis();   
+    pumpStoppedOnce = true;      
     Serial.println("⏹️  PUMP OFF");
   }
 }
+
+void checkPeriodicRestart() {
+  if (millis() >= PERIODIC_RESTART_INTERVAL_MS && !pumpRunning) {
+    Serial.println("♻️  6-hour periodic restart — pump is off, restarting now...");
+    delay(200);
+    ESP.restart();
+  }
+} 
 
 void handleOpenRequest(uint8_t id) {
   Serial.printf("📥 Node %d requests OPEN\n", id);
@@ -235,13 +256,16 @@ void handleIncoming(uint16_t signal) {
 void processPending() {
   if (pumpStartPending && (long)(millis() - pumpStartAt) >= 0) {
     if (countOpen() > 0) {
-      if (interlockOk() && !sourceEmptyConfirmed()) {
+      if (interlockOk() && !sourceEmptyConfirmed() && pumpRestartCooldownOk()) {
         startPump();
         pumpStartPending = false;
       } else {
         if (millis() - lastInterlockWarnAt > INTERLOCK_WARN_INTERVAL_MS) {
           if (sourceEmptyConfirmed()) {
             Serial.println("⛔ Pump start BLOCKED — D7 source-empty confirmed connected for 5s+");
+          } else if (!pumpRestartCooldownOk()) {
+            unsigned long remainingMs = PUMP_RESTART_DELAY_MS - (millis() - lastPumpStopAt);
+            Serial.printf("⛔ Pump start BLOCKED — restart cooldown active, %lus remaining\n", remainingMs / 1000);
           } else {
             Serial.println("⛔ Pump start BLOCKED — all 3 doors are OPEN (D1,D2,D5 all HIGH)");
           }
@@ -366,6 +390,10 @@ void printStatus() {
   } else {
     Serial.println("🚰 Source empty (D7) : not connected");
   }
+  if (!pumpRunning && pumpStoppedOnce && !pumpRestartCooldownOk()) {
+    unsigned long remainingMs = PUMP_RESTART_DELAY_MS - (millis() - lastPumpStopAt);
+    Serial.printf("⏱️  Pump restart cooldown : %lus remaining\n", remainingMs / 1000);
+  }
   for (uint8_t i = 1; i <= NUM_NODES; i++) {
     String seenStr = everSeen[i] ? (String((millis() - lastSeenAt[i]) / 1000) + "s ago") : "never";
     if (watchdogActive[i]) {
@@ -455,6 +483,7 @@ void loop() {
   processPending();
   checkNodeWatchdog();
   checkDoorAuthorization(); 
+  checkPeriodicRestart();  
   printStatus();
   if (statusPeerAdded) broadcastStatus(); 
   delay(50);
